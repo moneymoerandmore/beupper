@@ -30,6 +30,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+data/content-store.json
+data/latest-hotlists.json
+workflow/config.local.json
+__pycache__/
+*.pyc
 
 # vercel
 .vercel

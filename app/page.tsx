@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { topicEngineRules } from "./topic-engine";
+import { CreatorWorkflow } from "./creator-workflow";
 
 type Topic = {
   id: number;
@@ -13,54 +15,63 @@ type Topic = {
   score: number;
   status: string;
   accent: string;
+  freshness: string;
+  trigger: string;
 };
 
 const topics: Topic[] = [
   {
     id: 1,
-    title: "AI算力链重新定价：美股卖铲人，为什么带动A股液冷与港股云厂商？",
-    thesis: "从资本开支到订单兑现，三地市场正在交易同一件事的不同阶段。",
+    title: "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？",
+    thesis: "微软单日大涨15.5%、泛林集团涨18%，纳指反弹2.8%；A股白天接力，真正要判断的是“业绩验证”还是“超跌回补”。",
     markets: ["美股", "港股", "A股"],
-    heat: 94,
-    fit: 97,
-    depth: 91,
-    score: 95,
-    status: "主推",
+    heat: 99,
+    fit: 99,
+    depth: 94,
+    score: 98,
+    status: "立即做",
     accent: "violet",
+    freshness: "11 小时内",
+    trigger: "美股收盘 → A股盘中验证",
   },
   {
     id: 2,
-    title: "降息预期又反转：科技股、黄金和人民币资产谁更敏感？",
-    thesis: "利率不是单一变量，真正决定走势的是增长预期与风险偏好的组合。",
-    markets: ["美股", "A股", "大宗"],
-    heat: 89,
-    fit: 92,
+    title: "微软证明AI能赚钱，Meta却因加码投入承压：市场到底在奖励什么？",
+    thesis: "同样是AI资本开支，一家公司创近18年最佳单日，另一家却被市场惩罚；分水岭是回报兑现速度。",
+    markets: ["美股", "港股"],
+    heat: 93,
+    fit: 90,
     depth: 88,
-    score: 90,
+    score: 91,
     status: "备选",
     accent: "blue",
+    freshness: "昨夜财报",
+    trigger: "微软 / Meta 财报分化",
   },
   {
     id: 3,
-    title: "消费复苏的错觉：白酒、潮玩与本地生活正在走三条不同的路",
-    thesis: "总量叙事失效后，消费板块要看人群、场景和渠道的结构变化。",
-    markets: ["A股", "港股"],
-    heat: 83,
-    fit: 78,
-    depth: 86,
-    score: 82,
+    title: "半导体一个月暴跌后突然反包：为什么“涨得最猛”不等于“风险解除”？",
+    thesis: "费城半导体此前从高位深度回撤，昨夜反弹更像财报催化下的空头回补；要看成交、扩散与后续财报确认。",
+    markets: ["美股", "A股"],
+    heat: 91,
+    fit: 95,
+    depth: 96,
+    score: 94,
     status: "观察",
     accent: "amber",
+    freshness: "24 小时内",
+    trigger: "超跌反弹 / 趋势反转之争",
   },
 ];
 
 const pipeline = [
   { label: "热点采集", count: 24, done: true },
   { label: "候选评分", count: 8, done: true },
+  { label: "选题确认", count: 1, done: true },
   { label: "深度研究", count: 3, done: true },
+  { label: "包装确认", count: 1, done: false },
   { label: "口播成稿", count: 1, done: false },
   { label: "花生成片", count: 0, done: false },
-  { label: "多端发布", count: 0, done: false },
 ];
 
 const platformRows = [
@@ -132,6 +143,8 @@ export default function Home() {
           </div>
         </header>
 
+        {tab === "稿件工坊" && <CreatorWorkflow notify={notify} />}
+        <div style={{display: tab === "稿件工坊" ? "none" : "block"}}>
         <div className="stats">
           <div><span>今日候选</span><strong>24</strong><small className="up">↑ 8 个高潜</small></div>
           <div><span>待审稿件</span><strong>3</strong><small>1 篇今日发布</small></div>
@@ -155,6 +168,31 @@ export default function Home() {
           </div>
         </section>
 
+        <section className="engineCard">
+          <div className="sectionTitle">
+            <div><p className="eyebrow">TOPIC ENGINE V2</p><h2>先过硬门槛，再按事件强度排序</h2></div>
+            <span className="engineVersion">滚动窗口：每 30 分钟</span>
+          </div>
+          <div className="engineFlow">
+            <span><b>01</b>采集事件<small>行情·公告·新闻·社媒</small></span>
+            <i>→</i><span><b>02</b>事件聚类<small>同一事件合并去重</small></span>
+            <i>→</i><span><b>03</b>硬门筛除<small>时间·信源·异动·联动</small></span>
+            <i>→</i><span><b>04</b>动态评分<small>热度增速而非绝对热度</small></span>
+            <i>→</i><span><b>05</b>编辑判断<small>形成可证伪命题</small></span>
+          </div>
+          <div className="ruleGrid">
+            {topicEngineRules.map((item) => (
+              <div key={item.name}><strong>{item.name}</strong><p>{item.rule}</p><em>{item.weight}</em></div>
+            ))}
+          </div>
+          <div className="engineFoot">
+            <span><b>主推</b> ≥ 85分且全部过门</span>
+            <span><b>备选</b> 75—84分</span>
+            <span><b>观察</b> 未完成跨市场验证</span>
+            <span><b>自动淘汰</b> 超48小时无新增催化</span>
+          </div>
+        </section>
+
         <div className="grid">
           <section className="topicPanel">
             <div className="sectionTitle compact">
@@ -169,7 +207,7 @@ export default function Home() {
                     <div className="topicTop"><span className={`badge ${topic.status}`}>{topic.status}</span><span className="score">综合 {topic.score}</span></div>
                     <h3>{topic.title}</h3>
                     <p>{topic.thesis}</p>
-                    <div className="marketTags">{topic.markets.map((m) => <span key={m}>{m}</span>)}</div>
+                    <div className="marketTags"><span className="fresh">● {topic.freshness}</span>{topic.markets.map((m) => <span key={m}>{m}</span>)}<span>{topic.trigger}</span></div>
                   </div>
                 </button>
               ))}
@@ -181,9 +219,9 @@ export default function Home() {
             <div className="scoreRing"><strong>{active.score}</strong><span>推荐指数</span></div>
             <h2>为什么今天讲这个？</h2>
             <ul>
-              <li><b>热度有共振</b><span>中美讨论同时升温，且不是单一消息刺激</span></li>
-              <li><b>跨市场有落差</b><span>美股定价业绩，A股交易弹性，港股押注重估</span></li>
-              <li><b>观点可证伪</b><span>用资本开支、订单和估值三组数据建立证据链</span></li>
+              <li><b>刚刚发生</b><span>昨夜美股收盘确认，今天A股盘中完成第二市场验证</span></li>
+              <li><b>因果链清楚</b><span>微软AI回报兑现 → 美股AI链反包 → A股科技情绪修复</span></li>
+              <li><b>核心分歧够大</b><span>业绩驱动的趋势反转，还是深跌后的空头回补？</span></li>
             </ul>
             <div className="miniScores">
               <div><span>传播热度</span><b>{active.heat}</b><i style={{width: `${active.heat}%`}} /></div>
@@ -230,6 +268,16 @@ export default function Home() {
             <span><b>05</b><em>数据回流</em><small>完播 × 互动 × 转粉</small></span>
           </div>
         </section>
+        <section className="fusionCard">
+          <div><p className="eyebrow">PEANUTCUT FUSION</p><h2>新增闭环能力</h2></div>
+          <div className="fusionGrid">
+            <span><b>实时失败保护</b><small>核心数据源过期或抓取失败时停止主推，不用缓存伪装实时。</small><em>已完成</em></span>
+            <span><b>内容资产库</b><small>稿件自动存档、历史检索、系列管理、发布指标回填。</small><em>已完成</em></span>
+            <span><b>两个人工闸门</b><small>选题确认后才研究；标题、封面、Hook确认后才成稿。</small><em>已完成</em></span>
+            <span><b>花生纯口播</b><small>研究标注与分镜不混入口播，中文标点和数字读法单独校验。</small><em className="building">下一步</em></span>
+          </div>
+        </section>
+        </div>
       </section>
       {toast && <div className="toast">✓　{toast}</div>}
     </main>

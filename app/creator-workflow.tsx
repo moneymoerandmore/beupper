@@ -1,0 +1,309 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+const defaultTopic = "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？";
+
+const researchLayers = [
+  { key: "事实", title: "发生了什么", body: "微软财报后单日上涨15.5%，创近18年最佳单日表现；半导体设备公司泛林集团上涨18%，纳指上涨2.8%。随后A股科技方向在白天交易时段出现情绪修复。", status: "双源确认" },
+  { key: "因果", title: "市场为什么这样交易", body: "市场并非重新奖励所有AI投入，而是在奖励“资本开支已经转化为收入和利润”的公司。财报兑现、超跌仓位与空头回补共同放大了反弹。", status: "待持续验证" },
+  { key: "映射", title: "跨市场如何传导", body: "微软云业务和AI回报先修复美股风险偏好，设备股验证上游需求，再由A股半导体、光模块和算力链交易海外映射与高弹性。", status: "A股已验证" },
+  { key: "历史", title: "历史案例", body: "2022年末至2023年初的科技反弹说明：估值修复可以先于盈利见底，但只有订单、资本开支和盈利预测连续上修，反弹才能演化为趋势。", status: "可类比" },
+  { key: "大师", title: "大师观点", body: "霍华德·马克斯强调价格与价值的关系会被市场情绪暂时扭曲；索罗斯的反身性则解释了价格上涨如何改善融资、预期和风险偏好，进一步强化行情。", status: "观点支撑" },
+  { key: "反方", title: "最强反方观点", body: "半导体此前跌幅较深，一天的大涨可能只是拥挤空头回补。若后续公司指引没有继续上修、上涨扩散失败，所谓反转很可能重新退化为震荡。", status: "必须保留" },
+];
+
+const packages = [
+  {
+    title: "美股一夜暴涨，A股科技跟涨：反转来了，还是又一次诱多？",
+    hook: "昨晚，微软一天涨了15.5%。但如果你以为这是华尔街重新无脑相信AI，那可能正好理解反了。",
+    cover: "反转，还是诱多？",
+    type: "好问题", motive: "焦虑 + 好奇", keyword: "美股 / A股科技",
+    conflict: "暴力反弹 × 趋势未确认", coverMode: "标题抛问题，封面压缩矛盾",
+    visual: "紫红反包K线 + 冷黑背景", scores: { ctr: 94, search: 92, promise: 96, oral: 91 },
+  },
+  {
+    title: "微软暴涨15.5%背后：市场终于看懂了AI投资的分水岭",
+    hook: "同样是砸钱搞AI，为什么微软被资金疯抢，有些公司却越投越跌？市场真正奖励的只有四个字。",
+    cover: "AI开始算利润账",
+    type: "清晰结论", motive: "希望 + 好奇", keyword: "微软 / AI投资",
+    conflict: "巨额投入 × 开始盈利", coverMode: "标题给分水岭，封面给结论",
+    visual: "微软标识轮廓 + 发光利润曲线", scores: { ctr: 89, search: 96, promise: 92, oral: 94 },
+  },
+  {
+    title: "A股科技反弹能走多远？先看懂昨夜美股的三个信号",
+    hook: "今天A股科技股的反弹，起点其实不在A股，而在昨晚美国两份完全不同的成绩单。",
+    cover: "科技反弹看三点",
+    type: "好问题", motive: "实用 + 风险规避", keyword: "A股科技 / 美股",
+    conflict: "A股上涨 × 起点在海外", coverMode: "标题给方法，封面给进度锚点",
+    visual: "中美市场箭头 + 三个信号灯", scores: { ctr: 86, search: 95, promise: 94, oral: 96 },
+  },
+];
+
+const initialScript = `昨晚，微软一天涨了百分之十五点五。
+
+但如果你以为，这是华尔街重新开始无脑相信人工智能，那可能正好理解反了。
+
+因为这一夜，市场奖励的不是“谁在人工智能上花钱最多”，而是“谁已经证明这些钱能变成收入和利润”。这两个逻辑看起来很像，结果却完全不同。
+
+先看最直观的数字。微软公布业绩之后，股价创下接近十八年来最强的单日表现。纳斯达克指数上涨百分之二点八。半导体设备公司泛林集团上涨百分之十八。此前被连续抛售的芯片和人工智能产业链，出现了一次非常猛烈的修复。
+
+到了今天白天，A股科技股也开始反弹。于是很多人马上得出结论：海外科技重新起飞，A股科技新一轮行情来了。
+
+但问题没有这么简单。
+
+这次上涨最重要的信号，不是涨幅，而是市场的奖励机制变了。
+
+过去两年，只要一家公司宣布增加人工智能资本开支，市场通常会先兴奋。因为大家相信，算力投入越多，未来增长空间越大。但现在，投资者开始追问三个更现实的问题：这些服务器带来了多少新增收入？云业务的利润率有没有改善？投入一块钱，到底多久能够收回来？
+
+微软之所以被资金追捧，是因为它给出了相对清晰的答案。人工智能需求不再只是发布会里的宏大故事，而是开始进入云业务收入、订单和利润。也就是说，市场看到的不是一个新的梦想，而是一张逐渐能够对账的利润表。
+
+这对A股科技股有什么影响？
+
+第一，海外龙头的资本开支如果继续保持强度，算力硬件、光模块、服务器、液冷和半导体设备，就仍然有真实需求支撑。这是产业层面的映射。
+
+第二，美股科技股大涨会修复全球风险偏好。此前跌幅较大的A股科技公司弹性通常更高，所以资金会先交易情绪修复。这是估值和仓位层面的映射。
+
+第三，也是最容易被忽略的一点，美股上涨并不意味着A股所有科技公司都应该一起涨。微软能够证明人工智能投入产生回报，不代表每一家算力公司、每一家芯片公司都能拿到同样的订单和利润。真正有持续性的公司，必须沿着客户、订单、收入和利润这条链逐级验证。
+
+所以，这次到底是反转，还是诱多？
+
+我的判断是：现在可以确认的是超跌修复，但还不能仅凭一个交易日确认趋势反转。
+
+为什么？
+
+因为真正的趋势反转，至少还需要三个条件。
+
+第一个条件，是上涨必须从少数财报超预期的龙头，扩散到更广泛的半导体公司。如果只有微软和少数设备股上涨，那更像个股财报行情；如果存储、设备、设计、制造和软件连续获得盈利上修，才说明产业预期整体改变。
+
+第二个条件，是接下来的公司指引不能掉链子。股价可以靠空头回补涨一天，但盈利预测要靠订单和收入才能连续上调。如果后续财报只讲资本开支、不讲回报，市场很可能重新担心投入过度。
+
+第三个条件，是A股科技反弹之后要出现成交和基本面的双重确认。仅仅因为美股昨晚大涨，A股早盘高开，这叫情绪映射；高开之后还能放量、分化后龙头仍然稳住，并且公司订单得到验证，才叫趋势形成。
+
+这其实很像霍华德·马克斯经常强调的一个问题：好资产和好投资不是一回事，关键还要看你支付了什么价格。人工智能当然可能是未来十年最重要的产业趋势，但如果市场提前把十年的增长全部算进今天的价格，再优秀的公司也会产生巨大波动。
+
+索罗斯的反身性也能解释眼前的行情。股价上涨会改善市场情绪，降低融资成本，吸引更多资金，再进一步推高股价。这个过程可以自我强化。但反身性不是永动机，一旦盈利无法兑现，正反馈也会迅速倒转。
+
+回到今天的交易。
+
+如果你只看见“半导体暴涨”，很容易追在情绪最热的时候。如果你看见的是“市场开始区分能够兑现回报的人工智能投入，和仍然停留在故事里的投入”，你关注的就不再是整个板块，而是产业链中最先出现订单和利润验证的环节。
+
+所以接下来，不要只盯着指数红不红。重点观察三件事：海外科技公司的盈利预测是否继续上修，人工智能资本开支是否带来可量化回报，以及A股科技龙头能否用订单和业绩接住海外映射。
+
+昨夜的暴涨说明，资金并没有彻底放弃人工智能。但今天的反弹，还没有证明风险已经全部解除。
+
+市场真正进入的新阶段，不是重新相信所有人工智能故事，而是开始给每一个故事算账。
+
+而当市场开始算账，最大的机会和最大的陷阱，往往会同时出现。`;
+
+const steps = ["选题确认", "研究底稿", "包装确认", "纯口播稿", "花生成片", "数据回流"];
+
+export function CreatorWorkflow({ notify }: { notify: (message: string) => void }) {
+  const [step, setStep] = useState(0);
+  const [topic, setTopic] = useState(defaultTopic);
+  const [topicApproved, setTopicApproved] = useState(false);
+  const [packageIndex, setPackageIndex] = useState(0);
+  const [packageApproved, setPackageApproved] = useState(false);
+  const [script, setScript] = useState(initialScript);
+  const [archived, setArchived] = useState(false);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem("financial-titan-workflow");
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw);
+      setStep(saved.step ?? 0);
+      setTopic(saved.topic ?? defaultTopic);
+      setTopicApproved(Boolean(saved.topicApproved));
+      setPackageIndex(saved.packageIndex ?? 0);
+      setPackageApproved(Boolean(saved.packageApproved));
+      setScript(saved.script ?? initialScript);
+      setArchived(Boolean(saved.archived));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("financial-titan-workflow", JSON.stringify({
+      step, topic, topicApproved, packageIndex, packageApproved, script, archived,
+    }));
+  }, [step, topic, topicApproved, packageIndex, packageApproved, script, archived]);
+
+  const cleanLength = useMemo(() => script.replace(/\s/g, "").length, [script]);
+  const oralChecks = [
+    { label: "长度在1000—3000字", ok: cleanLength >= 1000 && cleanLength <= 3000 },
+    { label: "没有章节或分镜标签", ok: !/[【\[]?(镜头|画面|章节|Hook|开头)[】\]]?/i.test(script) },
+    { label: "使用中文标点", ok: !/[A-Za-z\u4e00-\u9fa5][,.!?][\u4e00-\u9fa5]/.test(script) },
+    { label: "包含反方观点与验证条件", ok: script.includes("还不能") && script.includes("条件") },
+    { label: "第一句含可搜索主体", ok: script.trim().slice(0, 45).includes("微软") },
+    { label: "避免AI腔排比否定", ok: !/不是[^。]{0,25}不是[^。]{0,25}而是/.test(script) },
+    { label: "具备4个以上留存单元", ok: script.split(/\n\s*\n/).filter(Boolean).length >= 8 },
+  ];
+  const scriptReady = oralChecks.every((item) => item.ok);
+
+  function approveTopic() {
+    setTopicApproved(true);
+    setStep(1);
+    notify("选题已通过 Gate 1，研究底稿可以继续");
+  }
+
+  function approvePackage() {
+    setPackageApproved(true);
+    setStep(3);
+    notify("标题、封面与 Hook 已通过 Gate 2");
+  }
+
+  async function copyScript() {
+    await navigator.clipboard.writeText(script);
+    notify("纯口播稿已复制，可直接粘贴到花生AI");
+  }
+
+  function archive() {
+    const existing = JSON.parse(window.localStorage.getItem("financial-titan-content-assets") || "[]");
+    existing.push({
+      id: `local-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      topic,
+      ...packages[packageIndex],
+      script,
+      status: "pending-production",
+      metrics: {},
+    });
+    window.localStorage.setItem("financial-titan-content-assets", JSON.stringify(existing));
+    setArchived(true);
+    notify("已存入本地内容资产库");
+  }
+
+  return (
+    <div className="studio">
+      <section className="studioStepper">
+        {steps.map((label, index) => (
+          <button key={label} className={`${index === step ? "current" : ""} ${index < step ? "passed" : ""}`} onClick={() => setStep(index)}>
+            <i>{index < step ? "✓" : index + 1}</i><span>{label}</span>
+          </button>
+        ))}
+      </section>
+
+      {step === 0 && (
+        <section className="studioPanel gatePanel">
+          <div className="gateLabel">GATE 1 · EDITOR DECISION</div>
+          <p className="eyebrow">SELECTED TOPIC</p>
+          <h2>确认今天真正值得做的判断</h2>
+          <textarea value={topic} onChange={(event) => setTopic(event.target.value)} aria-label="选题" />
+          <div className="gateReasons">
+            <span><b>时效</b>昨夜美股收盘，今日A股验证</span>
+            <span><b>异动</b>纳指与AI链显著反弹</span>
+            <span><b>联动</b>美股 → A股科技</span>
+            <span><b>分歧</b>趋势反转 vs 超跌回补</span>
+          </div>
+          <div className="studioActions"><button className="primary" onClick={approveTopic}>{topicApproved ? "已确认，进入研究 →" : "确认选题并锁定 →"}</button></div>
+        </section>
+      )}
+
+      {step === 1 && (
+        <section className="studioPanel">
+          <div className="studioTitle"><div><p className="eyebrow">RESEARCH BRIEF</p><h2>六层证据链</h2></div><button className="primary" onClick={() => setStep(2)}>研究完成，进入包装 →</button></div>
+          <div className="researchGrid">
+            {researchLayers.map((layer) => (
+              <article key={layer.key}><div><b>{layer.key}</b><em>{layer.status}</em></div><h3>{layer.title}</h3><p>{layer.body}</p></article>
+            ))}
+          </div>
+          <div className="researchConclusion"><b>一句话判断</b><p>这轮上涨确认了AI投资正在从“讲资本开支”进入“算投资回报”的阶段，但当前只能确认超跌修复；能否反转，要看盈利预测扩散、后续公司指引和A股订单验证。</p></div>
+        </section>
+      )}
+
+      {step === 2 && (
+        <section className="studioPanel gatePanel">
+          <div className="gateLabel">GATE 2 · PACKAGING DECISION</div>
+          <p className="eyebrow">TITLE · COVER · HOOK</p>
+          <h2>包装承诺必须和正文判断一致</h2>
+          <div className="packageList">
+            {packages.map((item, index) => (
+              <button key={item.title} className={packageIndex === index ? "selected" : ""} onClick={() => { setPackageIndex(index); setPackageApproved(false); }}>
+                <i>{String(index + 1).padStart(2, "0")}</i>
+                <span><b>{item.title}</b><small>开头：{item.hook}</small><em>封面：{item.cover}</em></span>
+              </button>
+            ))}
+          </div>
+          <div className="packageAudit">
+            <div className="coverMock">
+              <div className="coverChart"><i /><i /><i /><i /><i /></div>
+              <span>金融巨子 · 跨市场</span>
+              <strong>{packages[packageIndex].cover}</strong>
+              <em>?!</em>
+              <small>{packages[packageIndex].visual}</small>
+            </div>
+            <div className="packageLogic">
+              <h3>标题 × Hook × 封面审计</h3>
+              <dl>
+                <div><dt>标题类型</dt><dd>{packages[packageIndex].type}</dd></div>
+                <div><dt>受众动机</dt><dd>{packages[packageIndex].motive}</dd></div>
+                <div><dt>搜索锚点</dt><dd>{packages[packageIndex].keyword}</dd></div>
+                <div><dt>最强矛盾</dt><dd>{packages[packageIndex].conflict}</dd></div>
+                <div><dt>封面分工</dt><dd>{packages[packageIndex].coverMode}</dd></div>
+              </dl>
+              <div className="packageScores">
+                {Object.entries(packages[packageIndex].scores).map(([key, value]) => (
+                  <span key={key}>
+                    <small>{({ctr:"点击",search:"搜索",promise:"兑现",oral:"口语"} as Record<string, string>)[key]}</small>
+                    <b>{value}</b><i><em style={{width:`${value}%`}} /></i>
+                  </span>
+                ))}
+              </div>
+              <p>缩略图检查：主锤字4—8字、唯一视觉焦点、黑紫科技底色。标题负责完整问题，封面不复读标题。</p>
+            </div>
+          </div>
+          <div className="studioActions"><button className="primary" onClick={approvePackage}>{packageApproved ? "已确认，进入成稿 →" : "确认这套包装 →"}</button></div>
+        </section>
+      )}
+
+      {step === 3 && (
+        <section className="studioPanel scriptPanel">
+          <div className="studioTitle"><div><p className="eyebrow">PEANUT-READY SCRIPT</p><h2>纯口播编辑器</h2></div><div className="wordCount"><b>{cleanLength}</b> 字</div></div>
+          <div className="scriptLayout">
+            <textarea value={script} onChange={(event) => setScript(event.target.value)} aria-label="纯口播稿" />
+            <aside>
+              <h3>花生AI交付检查</h3>
+              {oralChecks.map((item) => <span className={item.ok ? "ok" : "bad"} key={item.label}><i>{item.ok ? "✓" : "!"}</i>{item.label}</span>)}
+              <p>这里只保留会被念出来的话。研究来源、章节名、镜头和素材说明不进入口播区。</p>
+              <div className="retentionUnits">
+                <b>留存单元</b>
+                <span>1. 暴涨事实 → 奖励机制变了</span>
+                <span>2. AI投入 → 开始算回报</span>
+                <span>3. 美股信号 → A股映射</span>
+                <span>4. 反转条件 → 三项验证</span>
+                <span>5. 大师框架 → 新阶段判断</span>
+              </div>
+              <button className="ghost wide" onClick={copyScript}>复制纯口播稿</button>
+              <button className="primary wide" disabled={!scriptReady} onClick={() => setStep(4)}>通过校验，交接花生 →</button>
+            </aside>
+          </div>
+        </section>
+      )}
+
+      {step === 4 && (
+        <section className="studioPanel productionPanel">
+          <div className="productionHero"><div className="peanutLarge">花生 <b>AI</b></div><h2>文稿已准备，可以成片</h2><p>先复制纯口播稿，再打开花生AI粘贴。生成9:16与16:9两套母版，成片后回到这里登记。</p></div>
+          <div className="productionChecklist">
+            <span>① 复制口播稿</span><span>② 打开花生AI</span><span>③ 生成双画幅</span><span>④ 人工检查数字与素材</span>
+          </div>
+          <div className="studioActions center">
+            <button className="ghost" onClick={copyScript}>复制口播稿</button>
+            <button className="primary" onClick={() => window.open("https://www.huasheng.cn/", "_blank", "noopener,noreferrer")}>打开花生AI →</button>
+            <button className="ghost" onClick={() => { archive(); setStep(5); }}>成片完成并存档</button>
+          </div>
+        </section>
+      )}
+
+      {step === 5 && (
+        <section className="studioPanel metricsPanel">
+          <p className="eyebrow">PUBLISH & LEARN</p><h2>发布后数据回流</h2>
+          <div className="archiveSuccess"><i>✓</i><div><b>{archived ? "内容已进入资产库" : "等待内容存档"}</b><span>发布后分别在24小时、72小时回填数据，才能让选题权重真正学习。</span></div></div>
+          <div className="metricInputs">
+            {["平台", "播放量", "3秒留存", "完播率", "点赞", "评论", "转发", "涨粉"].map((label) => <label key={label}>{label}<input placeholder="待回填" /></label>)}
+          </div>
+          <div className="studioActions"><button className="primary" onClick={() => notify("数据已保存，本条进入72小时观察期")}>保存本次数据</button><button className="ghost" onClick={() => setStep(0)}>开始下一条内容</button></div>
+        </section>
+      )}
+    </div>
+  );
+}
