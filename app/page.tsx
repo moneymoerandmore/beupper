@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { topicEngineRules } from "./topic-engine";
 import { CreatorWorkflow } from "./creator-workflow";
+import { BaiduSourcePanel } from "./baidu-source-panel";
+import { ProjectLibrary } from "./project-library";
 
 type Topic = {
   id: number;
@@ -17,9 +19,14 @@ type Topic = {
   accent: string;
   freshness: string;
   trigger: string;
+  gates?: Record<string, boolean>;
+  sourceCount?: number;
+  authorityCount?: number;
+  socialCount?: number;
+  evidence?: { title: string; url: string; site?: string; score: number }[];
 };
 
-const topics: Topic[] = [
+const demoTopics: Topic[] = [
   {
     id: 1,
     title: "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？",
@@ -65,20 +72,13 @@ const topics: Topic[] = [
 ];
 
 const pipeline = [
-  { label: "热点采集", count: 24, done: true },
-  { label: "候选评分", count: 8, done: true },
-  { label: "选题确认", count: 1, done: true },
-  { label: "深度研究", count: 3, done: true },
-  { label: "包装确认", count: 1, done: false },
-  { label: "口播成稿", count: 1, done: false },
-  { label: "花生成片", count: 0, done: false },
-];
-
-const platformRows = [
-  { name: "抖音", color: "#19c6a4", views: "48.2万", completion: "38.6%", follows: "+2,184", index: 86 },
-  { name: "Bilibili", color: "#4aa8ff", views: "16.8万", completion: "51.2%", follows: "+1,032", index: 92 },
-  { name: "YouTube", color: "#ff5353", views: "7.4万", completion: "44.7%", follows: "+486", index: 78 },
-  { name: "TikTok", color: "#c783ff", views: "12.1万", completion: "32.9%", follows: "+713", index: 74 },
+  { label: "热点采集", status: "待接入", done: false },
+  { label: "候选评分", status: "规则可用", done: true },
+  { label: "选题确认", status: "可使用", done: true },
+  { label: "深度研究", status: "可使用", done: true },
+  { label: "包装确认", status: "可使用", done: true },
+  { label: "口播成稿", status: "可使用", done: true },
+  { label: "花生成片", status: "人工交接", done: false },
 ];
 
 export default function Home() {
@@ -86,9 +86,16 @@ export default function Home() {
   const [tab, setTab] = useState("总览");
   const [toast, setToast] = useState("");
   const [ready, setReady] = useState(false);
-  const active = useMemo(() => topics.find((t) => t.id === selected) ?? topics[0], [selected]);
+  const [baiduConnected, setBaiduConnected] = useState(false);
+  const [liveScan, setLiveScan] = useState<any>(null);
+  const handleBaiduValidated = useCallback((value: boolean) => setBaiduConnected(value), []);
+  const handleScan = useCallback((value: any) => { setLiveScan(value); setSelected(1); }, []);
+  const topics: Topic[] = liveScan?.topics || [];
+  const active = useMemo(() => topics.find((t) => t.id === selected) ?? topics[0], [selected, topics]);
 
   useEffect(() => {
+    const openTab = window.localStorage.getItem("financial-titan-open-tab");
+    if (openTab) { setTab(openTab); window.localStorage.removeItem("financial-titan-open-tab"); }
     const stored = window.localStorage.getItem("fin-titan-selected");
     if (stored) setSelected(Number(stored));
     setReady(true);
@@ -116,16 +123,14 @@ export default function Home() {
           <div><b>金融巨子</b><span>CONTENT OS</span></div>
         </div>
         <nav>
-          {["总览", "热点雷达", "选题库", "稿件工坊", "发布日历", "数据复盘"].map((item, i) => (
+          {["总览", "稿件工坊", "资产库"].map((item, i) => (
             <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-              <span className="navIcon">{["◫", "⌁", "◇", "✎", "▦", "↗"][i]}</span>{item}
-              {item === "热点雷达" && <em>24</em>}
+              <span className="navIcon">{["◫", "✎", "▣"][i]}</span>{item}
             </button>
           ))}
         </nav>
         <div className="sidebarBottom">
-          <div className="autoStatus"><i /><span><b>工作流运行中</b><small>下次扫描 18:00</small></span></div>
-          <button className="settings">⚙　工作流设置</button>
+          <div className="autoStatus"><i /><span><b>本地工作流就绪</b><small>实时数据源未接入</small></span></div>
         </div>
       </aside>
 
@@ -137,41 +142,44 @@ export default function Home() {
             <p className="subtitle">从全球市场噪音里，找到今天最值得讲的一个判断。</p>
           </div>
           <div className="headerActions">
-            <button className="ghost" onClick={() => notify("已开始扫描中美社交网络与市场数据")}>↻　刷新热点</button>
-            <button className="primary" onClick={() => notify("已创建空白选题卡")}>＋ 新建选题</button>
             <div className="avatar">巨</div>
           </div>
         </header>
 
         {tab === "稿件工坊" && <CreatorWorkflow notify={notify} />}
-        <div style={{display: tab === "稿件工坊" ? "none" : "block"}}>
+        {tab === "资产库" && <ProjectLibrary notify={notify} />}
+        <div style={{display: tab === "总览" ? "block" : "none"}}>
+        <BaiduSourcePanel notify={notify} onValidated={handleBaiduValidated} onScan={handleScan} />
         <div className="stats">
-          <div><span>今日候选</span><strong>24</strong><small className="up">↑ 8 个高潜</small></div>
-          <div><span>待审稿件</span><strong>3</strong><small>1 篇今日发布</small></div>
-          <div><span>近 7 日播放</span><strong>84.5万</strong><small className="up">↑ 18.4%</small></div>
-          <div><span>内容健康度</span><strong>88</strong><small className="up">优秀</small></div>
+          <div><span>今日真实候选</span><strong>{liveScan ? topics.length : "—"}</strong><small>{liveScan ? `${liveScan.mainTopicCount} 个达到主推门槛` : baiduConnected ? "等待执行今日扫描" : "热点源尚未接入"}</small></div>
+          <div><span>待审稿件</span><strong>—</strong><small>等待本地资产同步</small></div>
+          <div><span>近 7 日播放</span><strong>—</strong><small>尚无真实平台数据</small></div>
+          <div><span>内容健康度</span><strong>—</strong><small>样本不足，暂不评分</small></div>
         </div>
 
         <section className="workflowCard">
           <div className="sectionTitle">
             <div><p className="eyebrow">DAILY ENGINE</p><h2>今日生产流水线</h2></div>
-            <span className="live"><i /> 自动同步中</span>
+            <span className="live manual"><i /> 本地手动模式</span>
           </div>
           <div className="pipeline">
-            {pipeline.map((step, i) => (
-              <div className="pipe" key={step.label}>
-                <div className={step.done ? "pipeCircle done" : "pipeCircle"}>{step.done ? "✓" : i + 1}</div>
-                <b>{step.label}</b><span>{step.count} 项</span>
-                {i < pipeline.length - 1 && <div className={step.done ? "line done" : "line"} />}
-              </div>
-            ))}
+            {pipeline.map((step, i) => {
+              const liveDone = i === 0 ? baiduConnected : step.done;
+              return (
+                <div className="pipe" key={step.label}>
+                  <div className={liveDone ? "pipeCircle done" : "pipeCircle"}>{liveDone ? "✓" : i + 1}</div>
+                  <b>{step.label}</b><span>{i === 0 && baiduConnected ? "百度 WebSearch 已验证" : step.status}</span>
+                  {i < pipeline.length - 1 && <div className={liveDone ? "line done" : "line"} />}
+                </div>
+              );
+            })}
           </div>
         </section>
 
         <section className="engineCard">
           <div className="sectionTitle">
             <div><p className="eyebrow">TOPIC ENGINE V2</p><h2>先过硬门槛，再按事件强度排序</h2></div>
-            <span className="engineVersion">滚动窗口：每 30 分钟</span>
+            <span className="engineVersion">{liveScan ? `实时扫描完成 · ${new Date(liveScan.scannedAt).toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}` : baiduConnected ? "百度 WebSearch 已接入 · 等待扫描" : "评分规则已配置 · 数据源待接入"}</span>
           </div>
           <div className="engineFlow">
             <span><b>01</b>采集事件<small>行情·公告·新闻·社媒</small></span>
@@ -197,9 +205,11 @@ export default function Home() {
           <section className="topicPanel">
             <div className="sectionTitle compact">
               <div><p className="eyebrow">TOPIC RADAR</p><h2>今日高潜选题</h2></div>
-              <button className="textBtn" onClick={() => setTab("热点雷达")}>查看全部 →</button>
+              <span className="demoLabel">{liveScan ? `百度实时扫描 · ${liveScan.queryCount} 组查询` : "等待真实扫描"}</span>
             </div>
             <div className="topicList">
+              {!liveScan && <div className="emptyTopics"><b>先验证百度 WebSearch，再扫描今日热点</b><span>扫描前不展示静态选题，避免把演示数据当成实时判断。</span></div>}
+              {liveScan && topics.length === 0 && <div className="emptyTopics"><b>本轮没有选题通过硬门槛</b><span>当前没有同时满足双来源、权威信源、近期催化与明确异动的事件。</span></div>}
               {topics.map((topic, i) => (
                 <button className={`topic ${selected === topic.id ? "selected" : ""}`} key={topic.id} onClick={() => setSelected(topic.id)}>
                   <div className={`rank ${topic.accent}`}>0{i + 1}</div>
@@ -216,19 +226,19 @@ export default function Home() {
 
           <aside className="decisionPanel">
             <p className="eyebrow">EDITOR&apos;S PICK</p>
-            <div className="scoreRing"><strong>{active.score}</strong><span>推荐指数</span></div>
+            <div className="scoreRing"><strong>{active?.score ?? "—"}</strong><span>推荐指数</span></div>
             <h2>为什么今天讲这个？</h2>
-            <ul>
-              <li><b>刚刚发生</b><span>昨夜美股收盘确认，今天A股盘中完成第二市场验证</span></li>
-              <li><b>因果链清楚</b><span>微软AI回报兑现 → 美股AI链反包 → A股科技情绪修复</span></li>
-              <li><b>核心分歧够大</b><span>业绩驱动的趋势反转，还是深跌后的空头回补？</span></li>
-            </ul>
+            {active ? <ul>
+              <li><b>来源有效</b><span>{active.sourceCount} 个独立站点，含 {active.authorityCount} 个高可信来源</span></li>
+              <li><b>热度可解释</b><span>{active.socialCount || 0} 个社交信号，事件强度与来源扩散共同计分</span></li>
+              <li><b>跨市场价值</b><span>{active.markets.join(" → ")}，可形成可验证的传导判断</span></li>
+            </ul> : <div className="emptyDecision">完成实时扫描后，这里会展示第一名选题的证据门槛和评分依据。</div>}
             <div className="miniScores">
-              <div><span>传播热度</span><b>{active.heat}</b><i style={{width: `${active.heat}%`}} /></div>
-              <div><span>账号匹配</span><b>{active.fit}</b><i style={{width: `${active.fit}%`}} /></div>
-              <div><span>分析纵深</span><b>{active.depth}</b><i style={{width: `${active.depth}%`}} /></div>
+              <div><span>传播热度</span><b>{active?.heat ?? "—"}</b><i style={{width: `${active?.heat || 0}%`}} /></div>
+              <div><span>账号匹配</span><b>{active?.fit ?? "—"}</b><i style={{width: `${active?.fit || 0}%`}} /></div>
+              <div><span>分析纵深</span><b>{active?.depth ?? "—"}</b><i style={{width: `${active?.depth || 0}%`}} /></div>
             </div>
-            <button className="primary wide" onClick={() => notify("选题已进入深度研究，正在生成证据链")}>用这个选题开稿　→</button>
+            <button className="primary wide" disabled={!active || active.status === "观察"} onClick={() => notify("选题已进入深度研究，正在生成证据链")}>用这个选题开稿　→</button>
           </aside>
         </div>
 
@@ -236,16 +246,11 @@ export default function Home() {
           <section className="performance">
             <div className="sectionTitle compact">
               <div><p className="eyebrow">PERFORMANCE</p><h2>近 7 日平台表现</h2></div>
-              <select aria-label="统计周期"><option>近 7 天</option><option>近 30 天</option></select>
             </div>
-            <div className="tableHead"><span>平台</span><span>播放</span><span>完播率</span><span>涨粉</span><span>内容指数</span></div>
-            {platformRows.map((row) => (
-              <div className="tableRow" key={row.name}>
-                <span className="platform"><i style={{background: row.color}} />{row.name}</span>
-                <b>{row.views}</b><span>{row.completion}</span><span className="up">{row.follows}</span>
-                <span className="index"><i><em style={{width: `${row.index}%`}} /></i><b>{row.index}</b></span>
-              </div>
-            ))}
+            <div className="emptyMetrics">
+              <i>∅</i>
+              <div><b>还没有真实发布数据</b><p>完成第一条内容后，在稿件工坊回填各平台的播放、完播、互动和涨粉；这里才会开始计算趋势。</p></div>
+            </div>
           </section>
 
           <section className="nextAction">

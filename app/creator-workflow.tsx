@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { downloadCover } from "./image-download";
 
 const defaultTopic = "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？";
 
@@ -99,6 +100,8 @@ const initialScript = `昨晚，微软一天涨了百分之十五点五。
 const steps = ["选题确认", "研究底稿", "包装确认", "纯口播稿", "花生成片", "数据回流"];
 
 export function CreatorWorkflow({ notify }: { notify: (message: string) => void }) {
+  const [projectId, setProjectId] = useState("");
+  const [hydrated, setHydrated] = useState(false);
   const [step, setStep] = useState(0);
   const [topic, setTopic] = useState(defaultTopic);
   const [topicApproved, setTopicApproved] = useState(false);
@@ -106,10 +109,25 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
   const [packageApproved, setPackageApproved] = useState(false);
   const [script, setScript] = useState(initialScript);
   const [archived, setArchived] = useState(false);
+  const [poeApiKey, setPoeApiKey] = useState("");
+  const [poeModel, setPoeModel] = useState("gpt-image-2");
+  const [coverPrompt, setCoverPrompt] = useState("");
+  const [coverImages, setCoverImages] = useState<{ landscape?: string; portrait?: string }>({});
+  const [coverGenerating, setCoverGenerating] = useState(false);
+  const [coverError, setCoverError] = useState("");
+  const [videoLink, setVideoLink] = useState("");
+  const [metricResult, setMetricResult] = useState<any>(null);
+  const [metricLoading, setMetricLoading] = useState(false);
+  const [metricError, setMetricError] = useState("");
 
   useEffect(() => {
-    const raw = window.localStorage.getItem("financial-titan-workflow");
-    if (!raw) return;
+    const currentId = window.localStorage.getItem("financial-titan-current-project") || `project-${Date.now()}`;
+    setProjectId(currentId);
+    window.localStorage.setItem("financial-titan-current-project", currentId);
+    const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
+    const project = projects.find((item: any) => item.id === currentId);
+    const raw = project ? JSON.stringify(project) : window.localStorage.getItem("financial-titan-workflow");
+    if (!raw) { setHydrated(true); return; }
     try {
       const saved = JSON.parse(raw);
       setStep(saved.step ?? 0);
@@ -119,14 +137,58 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
       setPackageApproved(Boolean(saved.packageApproved));
       setScript(saved.script ?? initialScript);
       setArchived(Boolean(saved.archived));
+      setCoverPrompt(saved.coverPrompt || "");
+      setCoverImages(saved.coverImages || {});
+      setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
+      const savedModel = window.localStorage.getItem("financial-titan-poe-model");
+      setPoeModel(!savedModel || ["image2", "nano-banana-2", "gpt-image-2"].includes(savedModel.toLowerCase()) ? "gpt-image-2" : savedModel);
     } catch {}
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
+    if (!hydrated || !projectId) return;
     window.localStorage.setItem("financial-titan-workflow", JSON.stringify({
-      step, topic, topicApproved, packageIndex, packageApproved, script, archived,
+      step, topic, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages,
     }));
-  }, [step, topic, topicApproved, packageIndex, packageApproved, script, archived]);
+    const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
+    const record = {
+      id: projectId,
+      createdAt: projects.find((item: any) => item.id === projectId)?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      step, topic, topicApproved, packageIndex, packageApproved, script, archived,
+      research: researchLayers,
+      packaging: packages[packageIndex],
+      coverPrompt, coverImages,
+    };
+    const index = projects.findIndex((item: any) => item.id === projectId);
+    if (index >= 0) projects[index] = record; else projects.unshift(record);
+    window.localStorage.setItem("financial-titan-projects", JSON.stringify(projects));
+  }, [hydrated, projectId, step, topic, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages]);
+
+  function createProject() {
+    const id = `project-${Date.now()}`;
+    window.localStorage.setItem("financial-titan-current-project", id);
+    setProjectId(id);
+    setStep(0); setTopic(defaultTopic); setTopicApproved(false); setPackageIndex(0);
+    setPackageApproved(false); setScript(initialScript); setArchived(false); setCoverImages({});
+    notify("已创建新项目，后续产出将自动保存");
+  }
+
+  useEffect(() => {
+    if (poeApiKey) window.localStorage.setItem("financial-titan-poe-key", poeApiKey);
+    else window.localStorage.removeItem("financial-titan-poe-key");
+    window.localStorage.setItem("financial-titan-poe-model", poeModel);
+  }, [poeApiKey, poeModel]);
+
+  useEffect(() => {
+    const selected = packages[packageIndex];
+    setCoverPrompt(
+      `为财经自媒体“金融巨子”设计高点击率视频封面。主题：${topic}。封面主锤字：“${selected.cover}”。` +
+      `视觉方向：${selected.visual}。核心冲突：${selected.conflict}。风格：高级金融媒体、黑紫科技底色、强烈明暗对比、` +
+      `单一视觉焦点、移动端缩略图清晰。必须准确呈现中文主锤字，避免小字、数据幻觉、股票代码、平台水印和复杂图表。`
+    );
+  }, [packageIndex, topic]);
 
   const cleanLength = useMemo(() => script.replace(/\s/g, "").length, [script]);
   const oralChecks = [
@@ -157,17 +219,91 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
     notify("纯口播稿已复制，可直接粘贴到花生AI");
   }
 
+  async function generateCover(format: "landscape" | "portrait") {
+    if (!poeApiKey.trim()) throw new Error("请先填写 Poe API Key。");
+    const isGptImage2 = poeModel.trim().toLowerCase() === "gpt-image-2";
+    const aspectRatio = format === "landscape" ? (isGptImage2 ? "3:2" : "16:9") : (isGptImage2 ? "2:3" : "9:16");
+    const response = await fetch("http://127.0.0.1:4318/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: poeApiKey,
+        model: poeModel || "gpt-image-2",
+        aspectRatio,
+        prompt: `${coverPrompt}\n当前输出画幅：${aspectRatio}。请针对该画幅重新构图，不要从其他画幅裁切。`,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "封面生成失败");
+    setCoverImages((current) => ({ ...current, [format]: payload.imageUrl }));
+  }
+
+  async function generateBothCovers() {
+    setCoverGenerating(true);
+    setCoverError("");
+    try {
+      await generateCover("landscape");
+      await generateCover("portrait");
+      notify("GPT-Image-2 已生成横版与竖版封面");
+    } catch (error) {
+      setCoverError(error instanceof Error ? error.message : "封面生成失败");
+    } finally {
+      setCoverGenerating(false);
+    }
+  }
+
+  async function collectPlatformMetrics() {
+    if (!videoLink.trim()) return;
+    setMetricLoading(true);
+    setMetricError("");
+    try {
+      const response = await fetch("/api/platform-metrics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: videoLink.trim() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "页面读取失败");
+      setMetricResult(payload);
+      const existing = JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]");
+      const currentUrl = videoLink.trim();
+      const index = existing.findIndex((item: any) => item.contentId === projectId && item.inputUrl === currentUrl);
+      const previous = index >= 0 ? existing[index] : null;
+      const publication = {
+        id: previous?.id || `publication-${Date.now()}`,
+        contentId: projectId,
+        inputUrl: currentUrl,
+        snapshot: payload,
+        history: [...(previous?.history || []), payload],
+        status: "collected",
+      };
+      if (index >= 0) existing[index] = publication; else existing.push(publication);
+      window.localStorage.setItem("financial-titan-publication-links", JSON.stringify(existing));
+      notify(`${payload.platform} 页面数据已采集并保存`);
+    } catch (error) {
+      setMetricError(error instanceof Error ? error.message : "页面读取失败");
+    } finally {
+      setMetricLoading(false);
+    }
+  }
+
   function archive() {
     const existing = JSON.parse(window.localStorage.getItem("financial-titan-content-assets") || "[]");
-    existing.push({
-      id: `local-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+    const asset = {
+      id: projectId,
+      createdAt: existing.find((item: any) => item.id === projectId)?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       topic,
       ...packages[packageIndex],
       script,
+      research: researchLayers,
+      coverPrompt,
+      coverImages,
       status: "pending-production",
       metrics: {},
-    });
+    };
+    const index = existing.findIndex((item: any) => item.id === projectId);
+    if (index >= 0) existing[index] = asset; else existing.unshift(asset);
     window.localStorage.setItem("financial-titan-content-assets", JSON.stringify(existing));
     setArchived(true);
     notify("已存入本地内容资产库");
@@ -175,6 +311,7 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
 
   return (
     <div className="studio">
+      <div className="projectBar"><span><b>自动保存项目</b><small>{projectId || "正在初始化…"}</small></span><button className="ghost" onClick={createProject}>＋ 新建项目</button></div>
       <section className="studioStepper">
         {steps.map((label, index) => (
           <button key={label} className={`${index === step ? "current" : ""} ${index < step ? "passed" : ""}`} onClick={() => setStep(index)}>
@@ -252,6 +389,31 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
               <p>缩略图检查：主锤字4—8字、唯一视觉焦点、黑紫科技底色。标题负责完整问题，封面不复读标题。</p>
             </div>
           </div>
+          <div className="aiCoverStudio">
+            <div className="aiCoverHeader">
+              <div><p className="eyebrow">POE · GPT-IMAGE-2</p><h3>AI 双画幅封面</h3></div>
+              <button className="primary" disabled={coverGenerating} onClick={generateBothCovers}>
+                {coverGenerating ? "正在生成两个画幅…" : "生成横版 + 竖版"}
+              </button>
+            </div>
+            <div className="poeConfig">
+              <label>Poe API Key<input type="password" value={poeApiKey} onChange={(event) => setPoeApiKey(event.target.value)} placeholder="仅保存在当前浏览器" autoComplete="off" /></label>
+              <label>模型<select value={poeModel} onChange={(event) => setPoeModel(event.target.value)}><option value="gpt-image-2">GPT-Image-2</option><option value="Nano-Banana-2">Nano-Banana-2（备用）</option></select></label>
+            </div>
+            <label className="coverPromptField">封面提示词<textarea value={coverPrompt} onChange={(event) => setCoverPrompt(event.target.value)} /></label>
+            {coverError && <p className="coverError">{coverError}</p>}
+            <div className="generatedCovers">
+              <figure className="landscapeCover">
+                {coverImages.landscape ? <img src={coverImages.landscape} alt="GPT-Image-2 生成的横版封面" /> : <div><b>横版</b><span>适配 YouTube、Bilibili</span></div>}
+                <figcaption><span>横版封面</span>{coverImages.landscape && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.landscape!, "png", "金融巨子-横版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.landscape!, "jpg", "金融巨子-横版封面")}>JPG</button></span>}</figcaption>
+              </figure>
+              <figure className="portraitCover">
+                {coverImages.portrait ? <img src={coverImages.portrait} alt="GPT-Image-2 生成的竖版封面" /> : <div><b>竖版</b><span>适配抖音、TikTok、Shorts</span></div>}
+                <figcaption><span>竖版封面</span>{coverImages.portrait && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.portrait!, "png", "金融巨子-竖版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.portrait!, "jpg", "金融巨子-竖版封面")}>JPG</button></span>}</figcaption>
+              </figure>
+            </div>
+            <p className="keyNotice">API Key 只保存在这台设备的浏览器中；点击生成时发送给本地接口，再由本地接口调用 Poe。</p>
+          </div>
           <div className="studioActions"><button className="primary" onClick={approvePackage}>{packageApproved ? "已确认，进入成稿 →" : "确认这套包装 →"}</button></div>
         </section>
       )}
@@ -297,11 +459,27 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
       {step === 5 && (
         <section className="studioPanel metricsPanel">
           <p className="eyebrow">PUBLISH & LEARN</p><h2>发布后数据回流</h2>
-          <div className="archiveSuccess"><i>✓</i><div><b>{archived ? "内容已进入资产库" : "等待内容存档"}</b><span>发布后分别在24小时、72小时回填数据，才能让选题权重真正学习。</span></div></div>
-          <div className="metricInputs">
-            {["平台", "播放量", "3秒留存", "完播率", "点赞", "评论", "转发", "涨粉"].map((label) => <label key={label}>{label}<input placeholder="待回填" /></label>)}
+          <div className="archiveSuccess"><i>✓</i><div><b>{archived ? "内容已进入资产库" : "等待内容存档"}</b><span>粘贴公开视频链接，系统从页面读取可见指标并记录采集时间；无需手填数字。</span></div></div>
+          <div className="linkCollector">
+            <label>平台视频链接<input value={videoLink} onChange={(event) => setVideoLink(event.target.value)} placeholder="粘贴抖音、Bilibili、YouTube 或 TikTok 视频链接" /></label>
+            <button className="primary" disabled={metricLoading || !videoLink.trim()} onClick={collectPlatformMetrics}>{metricLoading ? "正在读取页面…" : "读取并保存数据"}</button>
           </div>
-          <div className="studioActions"><button className="primary" onClick={() => notify("数据已保存，本条进入72小时观察期")}>保存本次数据</button><button className="ghost" onClick={() => setStep(0)}>开始下一条内容</button></div>
+          {metricError && <p className="coverError">{metricError}</p>}
+          {metricResult && (
+            <div className="metricResult">
+              <div><b>{metricResult.platform}</b><span>{metricResult.title || "已识别视频页面"}</span><em>{new Date(metricResult.collectedAt).toLocaleString("zh-CN")}</em></div>
+              <div className="metricCards">
+                {[
+                  ["播放", metricResult.metrics.views], ["点赞", metricResult.metrics.likes],
+                  ["评论", metricResult.metrics.comments], ["转发", metricResult.metrics.shares],
+                  ["收藏", metricResult.metrics.favorites],
+                ].map(([label, value]) => <span key={String(label)}><small>{label}</small><b>{value === null ? "页面不可见" : Number(value).toLocaleString("zh-CN")}</b></span>)}
+              </div>
+              <p>{metricResult.note}</p>
+            </div>
+          )}
+          <div className="unavailableMetrics"><b>公开视频页无法读取</b><span>3秒留存 · 完播率 · 观众画像 · 涨粉归因</span><small>这些指标只存在于创作者后台，系统不会猜测或伪造。</small></div>
+          <div className="studioActions"><button className="ghost" onClick={() => setStep(0)}>开始下一条内容</button></div>
         </section>
       )}
     </div>
