@@ -10,6 +10,8 @@ export type TopicSignal = {
   thesisTension: number;
   evidenceQuality: number;
   similarityToRecent: number;
+  eventClass?: "policy_shock" | "liquidity_shock" | "market_move" | "corporate_event" | "theme";
+  officialAction?: boolean;
 };
 
 export type TopicScore = {
@@ -61,6 +63,7 @@ export function rankTopic(signal: TopicSignal, now = new Date()): TopicScore {
     signal.evidenceQuality * 0.3,
   );
   const duplicatePenalty = clamp(signal.similarityToRecent) * 0.16;
+  const policyShock = signal.eventClass === "policy_shock" || signal.officialAction === true;
 
   const score = Math.round(clamp(
     freshness * 0.25 +
@@ -68,15 +71,15 @@ export function rankTopic(signal: TopicSignal, now = new Date()): TopicScore {
     socialHeat * 0.18 +
     transmission * 0.17 +
     fitAndDepth * 0.2 -
-    duplicatePenalty,
+    duplicatePenalty + (policyShock ? 12 : 0),
   ));
 
   // 硬门槛比总分更重要，防止“长期热门但今天没发生事”的题目混入。
-  if (ageHours > 48) reasons.push("核心事件已超过48小时");
-  if (signal.authoritativeSources < 2) reasons.push("不足两个独立权威信源");
-  if (signal.priceMovePercentile < 70 && socialHeat < 80) reasons.push("价格与讨论度均未达到异常阈值");
+  if (ageHours > (policyShock ? 72 : 48)) reasons.push(policyShock ? "政策冲击已超过72小时" : "核心事件已超过48小时");
+  if (signal.authoritativeSources < (policyShock ? 1 : 2)) reasons.push(policyShock ? "缺少官方或一级信源" : "不足两个独立权威信源");
+  if (!policyShock && signal.priceMovePercentile < 70 && socialHeat < 80) reasons.push("价格与讨论度均未达到异常阈值");
   if (signal.marketCount < 2) reasons.push("不具备跨市场映射");
-  if (signal.evidenceQuality < 65) reasons.push("证据链质量不足");
+  if (signal.evidenceQuality < (policyShock ? 55 : 65)) reasons.push("证据链质量不足");
 
   return {
     eligible: reasons.length === 0,

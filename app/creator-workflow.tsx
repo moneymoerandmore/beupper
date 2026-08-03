@@ -184,9 +184,16 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
   useEffect(() => {
     const selected = packages[packageIndex];
     setCoverPrompt(
-      `为财经自媒体“金融巨子”设计高点击率视频封面。主题：${topic}。封面主锤字：“${selected.cover}”。` +
-      `视觉方向：${selected.visual}。核心冲突：${selected.conflict}。风格：高级金融媒体、黑紫科技底色、强烈明暗对比、` +
-      `单一视觉焦点、移动端缩略图清晰。必须准确呈现中文主锤字，避免小字、数据幻觉、股票代码、平台水印和复杂图表。`
+      `你是世界级商业杂志艺术总监与高点击视频缩略图设计师。请为以下财经视频设计一张“0.5秒能看懂、缩小后仍有冲击力”的编辑级封面。\n\n` +
+      `【视频标题，仅用于理解，不要原样写进画面】${topic}\n` +
+      `【唯一允许出现的文字】${selected.cover}\n` +
+      `【核心矛盾】${selected.conflict}\n` +
+      `【可参考的视觉隐喻】${selected.visual}\n\n` +
+      `创意要求：不要做新闻截图拼贴，也不要把标题复述一遍。先把核心矛盾提炼成一个一眼可懂的视觉命题，用一个超大主体和一个对立元素讲清故事，让观众产生“到底哪一边会赢”的问题。主体占画面45%—65%，只保留一个视觉焦点；采用三分构图、明显景深和大面积负空间。\n\n` +
+      `视觉风格：顶级国际商业杂志封面、机构级财经视觉、电影级定向光、真实材质、克制而锋利。主色使用石墨黑或深海军蓝，搭配一种高识别信号色（警报红、电光绿或冷白），不要默认使用廉价紫色霓虹。画面要像一张经过艺术指导的摄影作品或高级编辑插画，而不是AI素材堆砌。\n\n` +
+      `文字规则：画面中只能出现“${selected.cover}”这一组中文，必须逐字准确、超大、粗体、高对比，最多两行；不得出现副标题、数字标签、股票代码、英文装饰字、频道名、账号名、“金融巨子”、Logo、角标或水印。文字与主体不能互相遮挡，手机缩略图尺寸仍清晰。\n\n` +
+      `严格禁止：密集K线和复杂图表、金币雨、金色牛熊雕像、廉价城市天际线、发光机器人、赛博朋克HUD、多个公司Logo拼贴、无依据的涨跌数字、虚构新闻标题、边框、平台UI、过多人物和杂乱小元素。\n\n` +
+      `最终标准：标题负责交代事件，封面负责制造视觉冲突；两者互补而不重复。先保证单一命题和点击冲动，再保证高级感。`
     );
   }, [packageIndex, topic]);
 
@@ -279,6 +286,7 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
       };
       if (index >= 0) existing[index] = publication; else existing.push(publication);
       window.localStorage.setItem("financial-titan-publication-links", JSON.stringify(existing));
+      window.dispatchEvent(new Event("financial-titan-publications-updated"));
       notify(`${payload.platform} 页面数据已采集并保存`);
     } catch (error) {
       setMetricError(error instanceof Error ? error.message : "页面读取失败");
@@ -364,7 +372,6 @@ export function CreatorWorkflow({ notify }: { notify: (message: string) => void 
           <div className="packageAudit">
             <div className="coverMock">
               <div className="coverChart"><i /><i /><i /><i /><i /></div>
-              <span>金融巨子 · 跨市场</span>
               <strong>{packages[packageIndex].cover}</strong>
               <em>?!</em>
               <small>{packages[packageIndex].visual}</small>

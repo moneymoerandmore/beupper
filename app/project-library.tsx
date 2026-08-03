@@ -24,6 +24,7 @@ export function ProjectLibrary({ notify }: { notify: (message: string) => void }
   function saveLinks(next: any[]) {
     setLinks(next);
     window.localStorage.setItem("financial-titan-publication-links", JSON.stringify(next));
+    window.dispatchEvent(new Event("financial-titan-publications-updated"));
   }
 
   async function collectPublication(link: any) {

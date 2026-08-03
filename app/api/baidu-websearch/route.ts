@@ -1,13 +1,15 @@
+import { classifyDomains, discoveryQueries, marketDomains } from "../../topic-taxonomy";
+import { rankTopic } from "../../topic-engine";
+
 export const runtime = "edge";
 
-const scanQueries = [
-  "今日 A股 港股 美股 科技 半导体 暴涨 暴跌 最新",
-  "过去24小时 美股科技股 财报 异动 AI 芯片",
-  "今日 微博 抖音 B站 雪球 热议 股票 半导体",
-  "today US stocks semiconductors AI earnings surge plunge",
-  "今日 A股 消费 红利 政策 盘中 异动",
-  "今日 港股 科技 恒生科技 南向资金 异动",
-];
+// 采集层优先追求召回率：同一领域使用“事件/价格/政策”三种视角检索，
+// 后续再交给 FinanceMCP 风格内容去重与事件聚合，不能在入口处过早裁剪。
+const scanQueries = [...new Set(discoveryQueries().flatMap((query) => [
+  query,
+  `${query} 官方 公告 原文`,
+  `${query} 价格 异动 市场反应`,
+]))];
 
 const entityGroups = [
   { key: "半导体", terms: ["半导体", "芯片", "英伟达", "台积电", "费城半导体", "光模块", "算力", "存储", "设备"] },
@@ -18,11 +20,13 @@ const entityGroups = [
   { key: "宏观政策", terms: ["美联储", "降息", "加息", "关税", "监管", "央行", "财政", "政策"] },
 ];
 
-const authorityPattern = /reuters|bloomberg|cnbc|wsj|sec\.gov|nasdaq\.com|nyse\.com|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
+const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|nasdaq\.com|nyse\.com|boj\.or\.jp|mof\.go\.jp|fed|treasury|imf|财经|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告|日本银行|日本财务省/i;
 const socialPattern = /weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
-const intensityPattern = /暴涨|暴跌|大涨|大跌|涨停|跌停|异动|反弹|跳水|新高|新低|财报|超预期|不及预期|降息|加息|关税|监管|收购|破产|surge|plunge|rally|selloff|earnings|record high/i;
+const intensityPattern = /暴涨|暴跌|大涨|大跌|涨停|跌停|异动|反弹|跳水|新高|新低|干预|联合干预|汇率询价|官方确认|政策转向|财报|超预期|不及预期|降息|加息|降准|关税|制裁|监管|收购|破产|surge|plunge|rally|selloff|intervention|rate check|earnings|record high/i;
 
-async function search(apiKey: string, query: string, topK = 10) {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function search(apiKey: string, query: string, topK = 50) {
   const rawKey = apiKey.trim().replace(/^Bearer\s+/i, "").trim().replace(/^["']|["']$/g, "");
   const qianfanMatch = rawKey.match(/bce-v3\/[A-Za-z0-9._/-]+/);
   const cleanKey = qianfanMatch?.[0] || rawKey.replace(/^(?:API_KEY|BAIDU_API_KEY)\s*=\s*/i, "").trim();
@@ -32,7 +36,7 @@ async function search(apiKey: string, query: string, topK = 10) {
     search_source: "baidu_search_v2",
     resource_type_filter: [
       { type: "web", top_k: topK },
-      { type: "video", top_k: Math.min(5, topK) },
+      { type: "video", top_k: Math.min(20, topK) },
     ],
     search_recency_filter: "week",
     sort: { priority: "auto" },
@@ -67,6 +71,22 @@ async function search(apiKey: string, query: string, topK = 10) {
   throw new Error(lastError);
 }
 
+async function throttledSearch(apiKey: string, query: string, topK = 50, previousRequestAt = 0) {
+  const gap = Date.now() - previousRequestAt;
+  if (gap < 1100) await sleep(1100 - gap);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return { result: await search(apiKey, query, topK), requestedAt: Date.now() };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const rateLimited = /qps|rate.?limit|429|too many|频率|并发/i.test(message);
+      if (!rateLimited || attempt === 2) throw error;
+      await sleep(3000 * (attempt + 1));
+    }
+  }
+  throw new Error("百度搜索请求未完成。");
+}
+
 function scoreReference(reference: any) {
   const text = `${reference.title || ""} ${reference.snippet || reference.abstract || reference.content || ""}`.toLowerCase();
   const url = String(reference.url || "");
@@ -97,23 +117,101 @@ function referenceText(reference: any) {
   return `${reference.title || ""} ${reference.snippet || reference.abstract || reference.content || ""} ${reference.url || ""}`;
 }
 
+// FinanceMCP 的核心去重链路：标题+摘要归一化后，用二元组 Jaccard 判断同一新闻的不同转载。
+function normalizeNewsText(value: string) {
+  return String(value || "").replace(/<[^>]+>/g, "").replace(/[\s\u3000]+/g, "").toLowerCase();
+}
+
+function bigrams(value: string) {
+  const text = normalizeNewsText(value);
+  const grams: string[] = [];
+  for (let i = 0; i < text.length - 1; i += 1) grams.push(text.slice(i, i + 2));
+  return grams.length ? grams : text ? [text] : [];
+}
+
+function jaccardSimilarity(left: string[], right: string[]) {
+  const a = new Set(left);
+  const b = new Set(right);
+  let intersection = 0;
+  for (const item of a) if (b.has(item)) intersection += 1;
+  const union = a.size + b.size - intersection;
+  return union ? intersection / union : 0;
+}
+
+function financeMcpDeduplicate(references: any[], threshold = 0.8) {
+  const representatives: any[] = [];
+  for (const reference of references) {
+    const content = `${reference.title || ""}\n${reference.snippet || reference.abstract || reference.content || ""}`;
+    const grams = bigrams(content);
+    const duplicate = representatives.find((representative) => {
+      const representativeContent = `${representative.title || ""}\n${representative.snippet || representative.abstract || representative.content || ""}`;
+      return jaccardSimilarity(grams, bigrams(representativeContent)) >= threshold;
+    });
+    if (duplicate) {
+      duplicate.duplicateCount = (duplicate.duplicateCount || 1) + 1;
+      duplicate.relatedSources = [...new Set([...(duplicate.relatedSources || []), reference.website || reference.site_name || reference.url].filter(Boolean))];
+    } else {
+      representatives.push({ ...reference, duplicateCount: 1, relatedSources: [reference.website || reference.site_name || reference.url].filter(Boolean) });
+    }
+  }
+  return representatives;
+}
+
+const genericTerms = new Set(["央行", "政策", "市场", "股市", "最新", "全球", "影响", "今日", "消息", "经济"]);
+
+function primaryDomain(text: string) {
+  const lower = text.toLowerCase();
+  return [...classifyDomains(text)].sort((a, b) => {
+    const aSpecific = a.terms.filter((term) => term.length >= 3 && !genericTerms.has(term) && lower.includes(term.toLowerCase())).length;
+    const bSpecific = b.terms.filter((term) => term.length >= 3 && !genericTerms.has(term) && lower.includes(term.toLowerCase())).length;
+    return bSpecific - aSpecific;
+  })[0];
+}
+
+function eventFingerprint(reference: any) {
+  const text = referenceText(reference);
+  const lower = text.toLowerCase();
+  const domain = primaryDomain(text);
+  const isYenIntervention = /美元|日元|美元兑日元|美元日元|yen|usd\/jpy|日本/.test(lower)
+    && /干预|联合干预|汇率询价|财政部|财务省|treasury|bessent|贝森特|intervention|rate check/.test(lower);
+  if (isYenIntervention) return "fx_intervention:us-japan-yen";
+  if (/日本央行|boj|植田|ueda/.test(lower)) return "monetary_policy:boj";
+  if (/美联储|fomc|fed|powell|鲍威尔/.test(lower)) return "monetary_policy:fed";
+  if (/中国人民银行|央行|pboc|mlf|逆回购|降准|lpr/.test(lower) && /利率|降息|降准|流动性|资金面/.test(lower)) return "monetary_policy:pboc";
+  if (/美债|美国国债|treasury yield|国债收益率/.test(lower)) return "rates_bonds:us-treasury";
+  const entities = (domain?.terms || [])
+    .filter((term) => term.length >= 3 && !genericTerms.has(term) && lower.includes(term.toLowerCase()))
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 3);
+  const actions = ["干预", "联合干预", "降息", "加息", "降准", "制裁", "关税", "监管", "财报", "并购", "收购", "破产", "暴涨", "暴跌", "跳水", "反弹", "intervention", "rate check", "earnings", "surge", "plunge"]
+    .filter((term) => lower.includes(term));
+  const title = String(reference.title || "").replace(/[，。！？：,.!?\s]/g, "").slice(0, 18);
+  return `${domain?.key || "market"}:${entities.join("+") || title}:${actions.slice(0, 2).join("+") || "signal"}`;
+}
+
 function detectMarkets(text: string) {
   const markets: string[] = [];
   if (/美股|纳指|标普|道指|nasdaq|s&p|wall street|英伟达|微软|meta/i.test(text)) markets.push("美股");
   if (/港股|恒生|南向|腾讯|阿里|美团|小米/i.test(text)) markets.push("港股");
   if (/a股|沪指|深成指|创业板|科创板|北向|涨停/i.test(text)) markets.push("A股");
+  if (/日元|日本|美元兑日元|boj|日本央行|财务省|yen|usd\/jpy/i.test(text)) markets.push("日股", "外汇");
+  if (/汇率|外汇|美元指数|dxy|currency|forex/i.test(text)) markets.push("外汇");
+  if (/美债|国债|收益率|债券|yield|treasury/i.test(text)) markets.push("债券");
+  if (/原油|黄金|铜|天然气|铁矿|商品|oil|gold|commodity/i.test(text)) markets.push("大宗商品");
   return markets;
 }
 
 function eventKey(reference: any) {
-  const text = referenceText(reference).toLowerCase();
-  const group = entityGroups.find((item) => item.terms.some((term) => text.includes(term.toLowerCase())));
-  if (group) return group.key;
-  return String(reference.title || "市场异动").replace(/[，。！？：,.!?\s]/g, "").slice(0, 12);
+  return eventFingerprint(reference);
 }
 
-function buildTopicTitle(key: string, markets: string[], leadTitle: string) {
+function buildTopicTitle(key: string, markets: string[], leadTitle: string, context = "") {
   const cross = markets.length >= 2 ? `${markets.join("、")}正在联动` : `${markets[0] || "资本市场"}出现异动`;
+  const text = `${leadTitle} ${context}`;
+  const isConfirmed = /确认|宣布|实施|出手|正式|confirmed|announced|implemented/i.test(text);
+  const isSignal = /暗示|释放|警告|考虑|可能|询价|signal|threat|consider/i.test(text);
+  const centralBank = text.match(/美联储|日本央行|日本银行|中国人民银行|央行|Fed|BOJ|FOMC|ECB/i)?.[0] || "央行";
+  const company = text.match(/英伟达|微软|Meta|谷歌|苹果|台积电|腾讯|阿里|美团|小米|英特尔|AMD/i)?.[0];
   const templates: Record<string, string> = {
     半导体: `${cross}：半导体这轮行情是趋势确认，还是情绪反弹？`,
     AI: `${cross}：AI交易重新升温，市场真正奖励的是什么？`,
@@ -122,7 +220,21 @@ function buildTopicTitle(key: string, markets: string[], leadTitle: string) {
     红利: `红利资产再度异动：防守交易为什么又回来了？`,
     宏观政策: `${cross}：最新政策信号将如何重估科技与高股息资产？`,
   };
-  return templates[key] || `${leadTitle.replace(/[。！!]$/, "")}：这次市场在交易什么？`;
+  const domainKey = key.split(":")[0];
+  const domainTemplates: Record<string, string> = {
+    fx_intervention: `${isConfirmed ? "美日官方确认" : isSignal ? "美日官员释放" : "美日市场出现"}汇率干预信号，美元兑日元快速波动：这是短期救火，还是全球资金风向变了？`,
+    monetary_policy: `${centralBank}${isConfirmed ? "正式调整" : isSignal ? "释放政策信号" : "政策预期升温"}，利率与流动性预期变化：股市估值会先重估还是盈利先变化？`,
+    fiscal_economic: `财政与经济数据出现新信号：市场先交易利率，还是先交易企业盈利？`,
+    liquidity: `资金面与流动性出现变化：这次是增量资金进场，还是杠杆风险开始收缩？`,
+    rates_bonds: `国债收益率与债券价格出现异动：无风险利率变化会把哪些股票重新定价？`,
+    commodities: `原油、黄金或工业金属出现价格冲击：成本与通胀会如何传导到股市？`,
+    geopolitics_trade: `贸易与地缘政策出现新动作：供应链、风险溢价和哪些行业会先受影响？`,
+    regulation: `监管规则出现实质变化：改变的是短期情绪，还是公司的商业模式？`,
+    corporate_earnings: `${company || "龙头公司"}财报或业绩指引出现变化：这是单家公司问题，还是行业预期拐点？`,
+  };
+  if (domainTemplates[domainKey]) return domainTemplates[domainKey];
+  if (templates[domainKey]) return `${leadTitle.replace(/[。！!]$/, "")}：市场在交易趋势确认，还是情绪反弹？`;
+  return `${leadTitle.replace(/[。！!]$/, "")}：这件事会怎样传导到股价？`;
 }
 
 function buildTopics(references: any[]) {
@@ -131,48 +243,113 @@ function buildTopics(references: any[]) {
     const key = eventKey(reference);
     clusters.set(key, [...(clusters.get(key) || []), reference]);
   }
-  return [...clusters.entries()].map(([key, items], index) => {
+  const rawCandidates = [...clusters.entries()].map(([key, items], index) => {
     const ranked = [...items].sort((a, b) => b.score - a.score);
     const allText = ranked.map(referenceText).join(" ");
     const markets = [...new Set(ranked.flatMap((item) => detectMarkets(referenceText(item))))];
     const authorityCount = ranked.filter((item) => authorityPattern.test(referenceText(item))).length;
-    const socialCount = ranked.filter((item) => socialPattern.test(referenceText(item))).length;
+    const chinaSocialCount = ranked.filter((item) => /微博|抖音|b站|雪球|weibo|douyin|bilibili|xueqiu/i.test(`${referenceText(item)} ${item.query || ""}`)).length;
+    const overseasSocialCount = ranked.filter((item) => /reddit|youtube|tiktok|x\.com|wallstreetbets/i.test(`${referenceText(item)} ${item.query || ""}`)).length;
+    const socialCount = chinaSocialCount + overseasSocialCount;
     const intensityCount = ranked.filter((item) => intensityPattern.test(referenceText(item))).length;
     const sourceHosts = new Set(ranked.map((item) => { try { return new URL(item.url).hostname; } catch { return item.site_name || ""; } }).filter(Boolean));
-    const gates = {
-      multiSource: sourceHosts.size >= 2,
-      authoritative: authorityCount >= 1,
-      catalyst: intensityCount >= 1,
-      fresh: ranked.some(isFreshReference),
-    };
-    const passedGateCount = Object.values(gates).filter(Boolean).length;
-    const heat = Math.min(100, 42 + Math.min(sourceHosts.size, 6) * 7 + socialCount * 5 + intensityCount * 4);
-    const fit = Math.min(100, 58 + markets.length * 9 + (/半导体|AI|港股科技/.test(key) ? 18 : 8));
-    const depth = Math.min(100, 55 + markets.length * 10 + Math.min(authorityCount, 3) * 7 + (ranked.length >= 4 ? 8 : 0));
-    const score = Math.round(heat * .42 + fit * .30 + depth * .28);
-    const allGatesPassed = passedGateCount === 4;
-    const status = allGatesPassed && score >= 85 ? "立即做" : allGatesPassed && score >= 75 ? "备选" : "观察";
+    const domain = primaryDomain(allText);
+    const officialAction = /官方确认|政府|财政部|财务省|央行|中央银行|国务院|监管机构|联合干预|intervention|treasury|finance ministry|central bank|official/i.test(allText);
+    const eventClass = officialAction || ["monetary_policy", "fx_intervention", "fiscal_economic", "regulation", "geopolitics_trade"].includes(domain?.key || "")
+      ? "policy_shock" as const
+      : ["liquidity", "rates_bonds"].includes(domain?.key || "") ? "liquidity_shock" as const
+        : ["corporate_earnings"].includes(domain?.key || "") ? "corporate_event" as const
+          : "theme" as const;
+    const occurredAt = ranked.map((item) => item.date || item.published_time || item.publish_time).find(Boolean) || new Date().toISOString();
+    const priceMovePercentile = intensityCount ? (markets.length >= 3 ? 92 : 82) : 55;
+    const chinaSocialPercentile = Math.min(100, chinaSocialCount * 28 + (chinaSocialCount ? 18 : 0));
+    const overseasSocialPercentile = Math.min(100, overseasSocialCount * 28 + (overseasSocialCount ? 18 : 0));
+    const accountFit = domain?.key === "technology_sector" || domain?.key === "fx_intervention" || domain?.key === "monetary_policy" || domain?.key === "liquidity" ? 92 : 78;
+    const engineScore = rankTopic({
+      occurredAt,
+      authoritativeSources: authorityCount,
+      priceMovePercentile,
+      chinaSocialPercentile,
+      overseasSocialPercentile,
+      marketCount: markets.length,
+      transmissionConfirmed: markets.length >= 3,
+      accountFit,
+      thesisTension: Math.min(100, 58 + intensityCount * 14 + (markets.length >= 3 ? 15 : 0)),
+      evidenceQuality: Math.min(100, 52 + Math.min(authorityCount, 4) * 12 + (sourceHosts.size >= 3 ? 10 : 0)),
+      similarityToRecent: 0,
+      eventClass,
+      officialAction,
+    });
+    const heat = Math.round(engineScore.breakdown.socialHeat);
+    const fit = Math.round(accountFit);
+    const depth = Math.round(engineScore.breakdown.fitAndDepth);
+    const score = engineScore.score;
+    const status = engineScore.eligible && score >= 85 ? "立即做" : engineScore.eligible ? "备选" : "观察";
     const lead = ranked[0];
+    const rejectionReasons = [...engineScore.reasons];
+    if (sourceHosts.size < 2) rejectionReasons.push("独立来源少于2个");
     return {
       id: index + 1,
       eventKey: key,
-      title: buildTopicTitle(key, markets, lead.title || key),
+      title: buildTopicTitle(key, markets, lead.title || key, allText),
       thesis: `${lead.title || key}。当前聚合 ${sourceHosts.size} 个独立站点、${authorityCount} 个高可信来源${socialCount ? `、${socialCount} 个社交信号` : ""}；核心判断需验证催化能否从${markets.join("向") || "单一市场"}继续扩散。`,
+      category: domain?.label || "市场事件",
+      channels: domain?.channels || [],
       markets: markets.length ? markets : ["待确认"],
       heat, fit, depth, score, status,
       accent: status === "立即做" ? "violet" : status === "备选" ? "blue" : "amber",
       freshness: "最近 48 小时",
       trigger: lead.title || key,
-      gates,
+      gates: { hardGate: engineScore.eligible, reasons: engineScore.reasons },
       sourceCount: sourceHosts.size,
       authorityCount,
       socialCount,
+      scoring: engineScore,
+      rejectionReasons,
       evidence: ranked.slice(0, 5).map((item) => ({ title: item.title, url: item.url, site: item.site_name, score: item.score })),
     };
-  }).filter((topic) => topic.sourceCount >= 2 && topic.gates.catalyst)
-    .sort((a, b) => (b.status === "立即做" ? 1 : 0) - (a.status === "立即做" ? 1 : 0) || b.score - a.score)
+  });
+  const merged = new Map<string, any>();
+  for (const candidate of rawCandidates) {
+    // 标题冒号后的判断句是事件语义；前面的市场列表只是映射结果，不应造成重复选题。
+    const semanticKey = candidate.title.includes("：") ? candidate.title.split("：").slice(1).join("：") : candidate.eventKey;
+    const existing = merged.get(semanticKey);
+    if (!existing) {
+      merged.set(semanticKey, candidate);
+      continue;
+    }
+    existing.markets = [...new Set([...(existing.markets || []), ...(candidate.markets || [])])];
+    existing.sourceCount = Math.max(existing.sourceCount || 0, candidate.sourceCount || 0);
+    existing.authorityCount = Math.max(existing.authorityCount || 0, candidate.authorityCount || 0);
+    existing.socialCount = Math.max(existing.socialCount || 0, candidate.socialCount || 0);
+    existing.evidence = [...(existing.evidence || []), ...(candidate.evidence || [])].slice(0, 8);
+    existing.rejectionReasons = [...new Set([...(existing.rejectionReasons || []), ...(candidate.rejectionReasons || [])])];
+    existing.score = Math.max(existing.score || 0, candidate.score || 0);
+    existing.heat = Math.max(existing.heat || 0, candidate.heat || 0);
+    existing.depth = Math.max(existing.depth || 0, candidate.depth || 0);
+    // 合并后的事件只要任一来源分支通过硬门槛即可继续评估；不能因为同一事件的
+    // 某个低质量转载分支失败，就把整个事件判死。
+    existing.gates.hardGate = existing.gates.hardGate || candidate.gates.hardGate;
+  }
+  const candidates = [...merged.values()];
+  // 高分事件进入候选池，证据不足只降级为“待补证据”，不再直接丢失。
+  const isEligible = (topic: any) =>
+    (topic.sourceCount >= 2 && topic.gates.hardGate) ||
+    (topic.score >= 90 && topic.sourceCount >= 1);
+  const eligible = candidates.filter(isEligible)
+    .sort((a, b) => b.score - a.score)
     .slice(0, 6)
     .map((topic, index) => ({ ...topic, id: index + 1 }));
+  const rejected = candidates.filter((topic) => !isEligible(topic))
+    .sort((a, b) => b.score - a.score)
+    .map((topic, index) => ({ ...topic, id: `rejected-${index + 1}` }));
+  const events = candidates.sort((a, b) => b.score - a.score).map((event, index) => ({
+    ...event,
+    rank: index + 1,
+    eligible: isEligible(event),
+    status: isEligible(event) ? (event.score >= 90 && !(event.sourceCount >= 2 && event.gates.hardGate) ? "待补证据" : event.score >= 85 ? "立即做" : "备选") : "未过门槛",
+  }));
+  return { topics: eligible, rejected, events, discoveredEventCount: events.length };
 }
 
 export async function POST(request: Request) {
@@ -183,9 +360,15 @@ export async function POST(request: Request) {
       const result = await search(apiKey, "今日全球资本市场热点", 3);
       return Response.json({ ok: true, requestId: result.requestId, resultCount: result.references.length, sample: result.references.slice(0, 3) });
     }
-    const batches = await Promise.all(scanQueries.map((query) => search(apiKey, query, 10)));
+    const batches: { query: string; requestId?: string; references: any[] }[] = [];
+    let previousRequestAt = 0;
+    for (const query of scanQueries) {
+      const response = await throttledSearch(apiKey, query, 10, previousRequestAt);
+      previousRequestAt = response.requestedAt;
+      batches.push(response.result);
+    }
     const seen = new Set<string>();
-    const references = batches.flatMap((batch) => batch.references.map((reference: any) => ({
+    const rawReferences = batches.flatMap((batch) => batch.references.map((reference: any) => ({
       ...reference,
       site_name: reference.website || reference.site_name || "",
       query: batch.query,
@@ -195,16 +378,24 @@ export async function POST(request: Request) {
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).sort((a: any, b: any) => b.score - a.score);
-    const topics = buildTopics(references);
+    });
+    const references = financeMcpDeduplicate(rawReferences).map((reference: any) => ({ ...reference, score: scoreReference(reference) })).sort((a: any, b: any) => b.score - a.score);
+    const topicResult = buildTopics(references);
+    const categoryCoverage = [...new Set(topicResult.rejected.concat(topicResult.topics).map((item) => item.category || "市场事件"))];
     return Response.json({
       ok: true,
       scannedAt: new Date().toISOString(),
       queryCount: scanQueries.length,
       references,
+      rawReferenceCount: rawReferences.length,
+      contentDedupCount: references.length,
       passed: references.filter((item: any) => item.score >= 45),
-      topics,
-      mainTopicCount: topics.filter((item) => item.status === "立即做").length,
+      topics: topicResult.topics,
+      rejectedTopics: topicResult.rejected,
+      events: topicResult.events,
+      discoveredEventCount: topicResult.discoveredEventCount,
+      categoryCoverage,
+      mainTopicCount: topicResult.topics.filter((item) => item.status === "立即做").length,
       requestIds: batches.map((batch) => batch.requestId),
     });
   } catch (error) {

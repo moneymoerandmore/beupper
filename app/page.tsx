@@ -19,6 +19,7 @@ type Topic = {
   accent: string;
   freshness: string;
   trigger: string;
+  category?: string;
   gates?: Record<string, boolean>;
   sourceCount?: number;
   authorityCount?: number;
@@ -88,17 +89,38 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [baiduConnected, setBaiduConnected] = useState(false);
   const [liveScan, setLiveScan] = useState<any>(null);
+  const [publications, setPublications] = useState<any[]>([]);
   const handleBaiduValidated = useCallback((value: boolean) => setBaiduConnected(value), []);
   const handleScan = useCallback((value: any) => { setLiveScan(value); setSelected(1); }, []);
   const topics: Topic[] = liveScan?.topics || [];
   const active = useMemo(() => topics.find((t) => t.id === selected) ?? topics[0], [selected, topics]);
+  const sevenDayPerformance = useMemo(() => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recent = publications.filter((item) => item.snapshot?.collectedAt && new Date(item.snapshot.collectedAt).getTime() >= cutoff);
+    const groups = new Map<string, { platform: string; posts: number; views: number; likes: number; comments: number; shares: number; favorites: number; restricted: number }>();
+    for (const item of recent) {
+      const snapshot = item.snapshot;
+      const platform = snapshot.platform || "未识别平台";
+      const row = groups.get(platform) || { platform, posts: 0, views: 0, likes: 0, comments: 0, shares: 0, favorites: 0, restricted: 0 };
+      row.posts += 1;
+      for (const key of ["views", "likes", "comments", "shares", "favorites"] as const) row[key] += Number(snapshot.metrics?.[key] || 0);
+      if (snapshot.status === "page_restricted") row.restricted += 1;
+      groups.set(platform, row);
+    }
+    const rows = [...groups.values()].map((row) => ({ ...row, engagement: row.views ? ((row.likes + row.comments + row.shares + row.favorites) / row.views) * 100 : null })).sort((a, b) => b.views - a.views);
+    return { rows, posts: recent.length, views: rows.reduce((sum, row) => sum + row.views, 0) };
+  }, [publications]);
 
   useEffect(() => {
     const openTab = window.localStorage.getItem("financial-titan-open-tab");
     if (openTab) { setTab(openTab); window.localStorage.removeItem("financial-titan-open-tab"); }
     const stored = window.localStorage.getItem("fin-titan-selected");
     if (stored) setSelected(Number(stored));
+    const loadPublications = () => setPublications(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
+    loadPublications();
+    window.addEventListener("financial-titan-publications-updated", loadPublications);
     setReady(true);
+    return () => window.removeEventListener("financial-titan-publications-updated", loadPublications);
   }, []);
 
   useEffect(() => {
@@ -153,7 +175,7 @@ export default function Home() {
         <div className="stats">
           <div><span>今日真实候选</span><strong>{liveScan ? topics.length : "—"}</strong><small>{liveScan ? `${liveScan.mainTopicCount} 个达到主推门槛` : baiduConnected ? "等待执行今日扫描" : "热点源尚未接入"}</small></div>
           <div><span>待审稿件</span><strong>—</strong><small>等待本地资产同步</small></div>
-          <div><span>近 7 日播放</span><strong>—</strong><small>尚无真实平台数据</small></div>
+          <div><span>近 7 日播放</span><strong>{sevenDayPerformance.posts ? sevenDayPerformance.views.toLocaleString("zh-CN") : "—"}</strong><small>{sevenDayPerformance.posts ? `${sevenDayPerformance.posts} 条投稿链接` : "尚无真实平台数据"}</small></div>
           <div><span>内容健康度</span><strong>—</strong><small>样本不足，暂不评分</small></div>
         </div>
 
@@ -217,7 +239,7 @@ export default function Home() {
                     <div className="topicTop"><span className={`badge ${topic.status}`}>{topic.status}</span><span className="score">综合 {topic.score}</span></div>
                     <h3>{topic.title}</h3>
                     <p>{topic.thesis}</p>
-                    <div className="marketTags"><span className="fresh">● {topic.freshness}</span>{topic.markets.map((m) => <span key={m}>{m}</span>)}<span>{topic.trigger}</span></div>
+                    <div className="marketTags"><span className="fresh">● {topic.freshness}</span>{topic.category && <span>{topic.category}</span>}{topic.markets.map((m) => <span key={m}>{m}</span>)}<span>{topic.trigger}</span></div>
                   </div>
                 </button>
               ))}
@@ -247,10 +269,21 @@ export default function Home() {
             <div className="sectionTitle compact">
               <div><p className="eyebrow">PERFORMANCE</p><h2>近 7 日平台表现</h2></div>
             </div>
-            <div className="emptyMetrics">
+            {sevenDayPerformance.rows.length ? <div className="performanceTable">
+              <div className="tableHead"><span>平台</span><span>投稿</span><span>播放</span><span>互动</span><span>互动率</span></div>
+              {sevenDayPerformance.rows.map((row) => {
+                const interactions = row.likes + row.comments + row.shares + row.favorites;
+                return <div className="tableRow" key={row.platform}>
+                  <span className="platform"><i style={{background: row.platform === "YouTube" ? "#ef4444" : row.platform === "Bilibili" ? "#43b5e9" : "#171820"}} />{row.platform}</span>
+                  <b>{row.posts}</b><b>{row.views ? row.views.toLocaleString("zh-CN") : "—"}</b><b>{interactions ? interactions.toLocaleString("zh-CN") : "—"}</b>
+                  <span className="index">{row.engagement == null ? "页面未公开" : <><i><em style={{width: `${Math.min(100, row.engagement * 5)}%`}} /></i>{row.engagement.toFixed(1)}%</>}</span>
+                </div>;
+              })}
+              <p className="metricDisclosure">统计最近7天采集到的公开页面数据；平台未公开的播放或互动不会估算。</p>
+            </div> : <div className="emptyMetrics">
               <i>∅</i>
-              <div><b>还没有真实发布数据</b><p>完成第一条内容后，在稿件工坊回填各平台的播放、完播、互动和涨粉；这里才会开始计算趋势。</p></div>
-            </div>
+              <div><b>还没有真实发布数据</b><p>在资产库为稿件添加平台视频链接后，系统会读取公开页面指标并自动汇总到这里。</p></div>
+            </div>}
           </section>
 
           <section className="nextAction">
