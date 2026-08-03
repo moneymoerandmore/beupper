@@ -85,3 +85,4 @@ h1 { font-size:29px; margin:0 0 7px; letter-spacing:-1px; } .subtitle { margin:0
 .coverDownloads{display:flex;gap:5px}.coverDownloads button,.savedCovers figcaption button{border:0;background:#eeecff;color:#5d50d2;border-radius:4px;padding:4px 7px;font-size:8px;cursor:pointer}.savedCovers figure{margin:0}.savedCovers figcaption{display:flex;gap:6px;margin-top:6px}
 .savedCovers figure:first-child img{aspect-ratio:16/9;object-fit:cover}.savedCovers figure:last-child img{aspect-ratio:9/16;object-fit:cover}
 .poeConfig select{border:1px solid #dcdce4;border-radius:6px;background:white;padding:10px;font:inherit;color:#17171c}
+.dangerButton{border:1px solid #efb4b4;background:#fff5f5;color:#b42318;border-radius:6px;padding:7px 10px;font:inherit;cursor:pointer}.dangerButton:hover{background:#fee2e2;border-color:#dc2626}

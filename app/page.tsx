@@ -89,6 +89,8 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [baiduConnected, setBaiduConnected] = useState(false);
   const [liveScan, setLiveScan] = useState<any>(null);
+  const [draftStartRequestId, setDraftStartRequestId] = useState(0);
+  const [editProjectId, setEditProjectId] = useState("");
   const [publications, setPublications] = useState<any[]>([]);
   const handleBaiduValidated = useCallback((value: boolean) => setBaiduConnected(value), []);
   const handleScan = useCallback((value: any) => { setLiveScan(value); setSelected(1); }, []);
@@ -168,8 +170,8 @@ export default function Home() {
           </div>
         </header>
 
-        {tab === "稿件工坊" && <CreatorWorkflow notify={notify} />}
-        {tab === "资产库" && <ProjectLibrary notify={notify} />}
+        {tab === "稿件工坊" && <CreatorWorkflow key={editProjectId ? `edit-${editProjectId}` : `draft-${draftStartRequestId}`} notify={notify} selectedTopic={editProjectId ? undefined : active?.title} selectedTopicData={editProjectId ? undefined : active} startRequestId={editProjectId ? 0 : draftStartRequestId} editProjectId={editProjectId} />}
+        {tab === "资产库" && <ProjectLibrary notify={notify} onEditProject={(projectId) => { setEditProjectId(projectId); setDraftStartRequestId(0); setTab("稿件工坊"); notify("已载入指定项目，继续编辑不会创建副本"); }} />}
         <div style={{display: tab === "总览" ? "block" : "none"}}>
         <BaiduSourcePanel notify={notify} onValidated={handleBaiduValidated} onScan={handleScan} />
         <div className="stats">
@@ -260,7 +262,7 @@ export default function Home() {
               <div><span>账号匹配</span><b>{active?.fit ?? "—"}</b><i style={{width: `${active?.fit || 0}%`}} /></div>
               <div><span>分析纵深</span><b>{active?.depth ?? "—"}</b><i style={{width: `${active?.depth || 0}%`}} /></div>
             </div>
-            <button className="primary wide" disabled={!active || active.status === "观察"} onClick={() => notify("选题已进入深度研究，正在生成证据链")}>用这个选题开稿　→</button>
+            <button className="primary wide" disabled={!active || active.status === "观察"} onClick={() => { if (!active) return; setEditProjectId(""); setDraftStartRequestId(Date.now()); setTab("稿件工坊"); notify("已按当前热点创建全新稿件任务"); }}>用这个选题开稿　→</button>
           </aside>
         </div>
 

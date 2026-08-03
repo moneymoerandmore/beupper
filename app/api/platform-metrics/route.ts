@@ -3,7 +3,8 @@ export const runtime = "edge";
 const platforms = [
   { id: "youtube", label: "YouTube", hosts: ["youtube.com", "youtu.be"] },
   { id: "bilibili", label: "Bilibili", hosts: ["bilibili.com", "b23.tv"] },
-  { id: "douyin", label: "抖音", hosts: ["douyin.com", "iesdouyin.com"] },
+  { id: "douyin", label: "抖音", hosts: ["douyin.com", "iesdouyin.com", "v.douyin.com"] },
+  { id: "xiaohongshu", label: "小红书", hosts: ["xiaohongshu.com", "xhslink.com", "xhs.cn"] },
   { id: "tiktok", label: "TikTok", hosts: ["tiktok.com"] },
 ];
 
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
     const target = new URL(String(url || "").trim());
     if (target.protocol !== "https:" && target.protocol !== "http:") throw new Error("链接必须以 http 或 https 开头。");
     const platform = platforms.find((item) => item.hosts.some((host) => target.hostname === host || target.hostname.endsWith(`.${host}`)));
-    if (!platform) return Response.json({ error: "暂只支持抖音、Bilibili、YouTube 和 TikTok 链接。" }, { status: 400 });
+    if (!platform) return Response.json({ error: "暂只支持抖音、小红书、Bilibili、YouTube 和 TikTok 链接。" }, { status: 400 });
 
     const response = await fetch(target.toString(), {
       redirect: "follow",
@@ -47,26 +48,30 @@ export async function POST(request: Request) {
     });
     if (!response.ok) return Response.json({ error: `${platform.label} 页面读取失败（${response.status}）` }, { status: 502 });
     const html = await response.text();
+    const searchableHtml = html.replace(/&quot;/g, '"').replace(/\\"/g, '"').replace(/\\u002F/gi, "/");
 
     const metrics = {
-      views: firstMatch(html, [
+      views: firstMatch(searchableHtml, [
         /"viewCount"\s*:\s*"?(\d[\d,]*)/i, /"playCount"\s*:\s*(\d+)/i,
-        /"play_count"\s*:\s*(\d+)/i, /itemprop=["']interactionCount["'][^>]+content=["'](\d+)/i,
+        /"play_count"\s*:\s*(\d+)/i, /"view_count"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i,
+        /itemprop=["']interactionCount["'][^>]+content=["'](\d+)/i,
       ]),
-      likes: firstMatch(html, [
+      likes: firstMatch(searchableHtml, [
         /"likeCount"\s*:\s*"?(\d[\d,]*)/i, /"diggCount"\s*:\s*(\d+)/i,
-        /"digg_count"\s*:\s*(\d+)/i, /"like"\s*:\s*(\d+)/i,
+        /"digg_count"\s*:\s*(\d+)/i, /"likedCount"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i,
+        /"liked_count"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i, /"like"\s*:\s*(\d+)/i,
       ]),
-      comments: firstMatch(html, [
-        /"commentCount"\s*:\s*"?(\d[\d,]*)/i, /"comment_count"\s*:\s*(\d+)/i,
+      comments: firstMatch(searchableHtml, [
+        /"commentCount"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i, /"comment_count"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i,
         /"reply"\s*:\s*(\d+)/i,
       ]),
-      shares: firstMatch(html, [
-        /"shareCount"\s*:\s*"?(\d[\d,]*)/i, /"share_count"\s*:\s*(\d+)/i,
+      shares: firstMatch(searchableHtml, [
+        /"shareCount"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i, /"share_count"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i,
         /"share"\s*:\s*(\d+)/i,
       ]),
-      favorites: firstMatch(html, [
-        /"collectCount"\s*:\s*"?(\d[\d,]*)/i, /"collect_count"\s*:\s*(\d+)/i,
+      favorites: firstMatch(searchableHtml, [
+        /"collectCount"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i, /"collect_count"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i,
+        /"collectedCount"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i, /"collected_count"\s*:\s*"?(\d[\d,.万亿kKmM]*)/i,
         /"favoriteCount"\s*:\s*"?(\d[\d,]*)/i, /"favorite"\s*:\s*(\d+)/i,
       ]),
     };
@@ -74,13 +79,15 @@ export async function POST(request: Request) {
     return Response.json({
       platform: platform.label,
       url: response.url,
-      title: extractTitle(html),
+      title: extractTitle(searchableHtml),
       metrics,
       collectedAt: new Date().toISOString(),
       status: visibleCount ? "collected" : "page_restricted",
       note: visibleCount
         ? "仅记录公开页面可见数据；完播率、3秒留存和涨粉归因无法从公开视频页获得。"
-        : "平台未在公开页面正文中提供指标，可能需要登录或由浏览器执行页面脚本。",
+        : platform.id === "douyin" || platform.id === "xiaohongshu"
+          ? `${platform.label} 已识别链接，但当前公开响应没有指标；该页面可能要求登录、浏览器执行脚本或通过风控验证。`
+          : "平台未在公开页面正文中提供指标，可能需要登录或由浏览器执行页面脚本。",
     });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "链接读取失败。" }, { status: 400 });

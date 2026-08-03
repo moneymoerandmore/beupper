@@ -64,8 +64,18 @@ def generate(request_data):
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
-            timeout=170,
+            # 图片模型经常需要数分钟。连接阶段快速失败，生成读取阶段允许 6 分钟；
+            # 读取超时后不自动重试，避免同一张图重复提交和重复计费。
+            timeout=(20, 360),
         )
+    except requests.exceptions.ReadTimeout:
+        return {
+            "ok": False,
+            "status": 504,
+            "error": "Poe 图片生成超过 6 分钟仍未返回。为避免重复扣费，本次没有自动重试；请稍后单独重新生成失败的画幅。",
+        }
+    except requests.exceptions.ConnectTimeout:
+        return {"ok": False, "status": 504, "error": "连接 Poe 超时，请检查网络后重试。"}
     except requests.RequestException as error:
         return {"ok": False, "status": 502, "error": f"连接 Poe 失败：{error}"}
 

@@ -5,15 +5,23 @@ import { downloadCover } from "./image-download";
 
 const stepNames = ["选题确认", "研究底稿", "包装确认", "口播成稿", "花生成片", "数据回流"];
 
-export function ProjectLibrary({ notify }: { notify: (message: string) => void }) {
+export function ProjectLibrary({ notify, onEditProject }: { notify: (message: string) => void; onEditProject: (projectId: string) => void }) {
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [links, setLinks] = useState<any[]>([]);
   const [newLink, setNewLink] = useState("");
 
   useEffect(() => {
-    const saved = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
-    setProjects(saved.sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt))));
+    const raw = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
+    // 历史版本可能在初始化竞态中写入同 ID 副本；按 ID 只保留最近更新的一份。
+    const byId = new Map<string, any>();
+    for (const item of raw) {
+      const existing = byId.get(item.id);
+      if (!existing || String(item.updatedAt) > String(existing.updatedAt)) byId.set(item.id, item);
+    }
+    const saved = [...byId.values()].sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    if (saved.length !== raw.length) window.localStorage.setItem("financial-titan-projects", JSON.stringify(saved));
+    setProjects(saved);
     setSelectedId(saved[0]?.id || "");
     setLinks(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
   }, []);
@@ -57,8 +65,7 @@ export function ProjectLibrary({ notify }: { notify: (message: string) => void }
   function continueProject() {
     if (!selected) return;
     window.localStorage.setItem("financial-titan-current-project", selected.id);
-    window.localStorage.setItem("financial-titan-open-tab", "稿件工坊");
-    window.location.reload();
+    onEditProject(selected.id);
   }
 
   async function copyScript() {
@@ -78,6 +85,26 @@ export function ProjectLibrary({ notify }: { notify: (message: string) => void }
     URL.revokeObjectURL(url);
   }
 
+  function deleteProject() {
+    if (!selected) return;
+    const label = selected.packaging?.title || selected.topic || "未命名项目";
+    if (!window.confirm(`确定删除“${label}”吗？\n\n稿件、封面和绑定的投稿数据都会从本地资产库移除，此操作无法撤销。`)) return;
+    const nextProjects = projects.filter((item) => item.id !== selected.id);
+    const nextLinks = links.filter((item) => item.contentId !== selected.id);
+    const contentAssets = JSON.parse(window.localStorage.getItem("financial-titan-content-assets") || "[]")
+      .filter((item: any) => item.id !== selected.id);
+    window.localStorage.setItem("financial-titan-projects", JSON.stringify(nextProjects));
+    window.localStorage.setItem("financial-titan-content-assets", JSON.stringify(contentAssets));
+    saveLinks(nextLinks);
+    if (window.localStorage.getItem("financial-titan-current-project") === selected.id) {
+      window.localStorage.removeItem("financial-titan-current-project");
+      window.localStorage.removeItem("financial-titan-workflow");
+    }
+    setProjects(nextProjects);
+    setSelectedId(nextProjects[0]?.id || "");
+    notify("废弃项目及其投稿数据已删除");
+  }
+
   return (
     <div className="libraryLayout">
       <aside className="projectList">
@@ -91,7 +118,7 @@ export function ProjectLibrary({ notify }: { notify: (message: string) => void }
       </aside>
       {selected && (
         <section className="projectDetail">
-          <div className="projectDetailHead"><div><p className="eyebrow">AUTO-SAVED OUTPUT</p><h2>{selected.packaging?.title || selected.topic}</h2></div><div><button className="ghost" onClick={exportProject}>导出 JSON</button><button className="primary" onClick={continueProject}>继续编辑</button></div></div>
+          <div className="projectDetailHead"><div><p className="eyebrow">AUTO-SAVED OUTPUT</p><h2>{selected.packaging?.title || selected.topic}</h2></div><div><button className="dangerButton" onClick={deleteProject}>删除项目</button><button className="ghost" onClick={exportProject}>导出 JSON</button><button className="primary" onClick={continueProject}>继续编辑</button></div></div>
           <div className="projectMeta"><span>当前阶段<b>{stepNames[selected.step]}</b></span><span>创建时间<b>{new Date(selected.createdAt).toLocaleString("zh-CN")}</b></span><span>最近保存<b>{new Date(selected.updatedAt).toLocaleString("zh-CN")}</b></span></div>
           <article className="outputBlock"><h3>选题</h3><p>{selected.topic}</p></article>
           <article className="outputBlock"><h3>研究底稿</h3><div className="savedResearch">{(selected.research || []).map((item: any) => <span key={item.key}><b>{item.key} · {item.title}</b><small>{item.body}</small></span>)}</div></article>
@@ -99,7 +126,7 @@ export function ProjectLibrary({ notify }: { notify: (message: string) => void }
           {(selected.coverImages?.landscape || selected.coverImages?.portrait) && <article className="outputBlock"><h3>生成封面</h3><div className="savedCovers">{selected.coverImages.landscape && <figure><img src={selected.coverImages.landscape} alt="已保存横版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.landscape, "png", "金融巨子-横版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.landscape, "jpg", "金融巨子-横版封面")}>下载 JPG</button></figcaption></figure>}{selected.coverImages.portrait && <figure><img src={selected.coverImages.portrait} alt="已保存竖版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.portrait, "png", "金融巨子-竖版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.portrait, "jpg", "金融巨子-竖版封面")}>下载 JPG</button></figcaption></figure>}</div></article>}
           <article className="outputBlock publicationAssets">
             <div className="blockHead"><h3>投稿链接与平台数据</h3><span>{selectedLinks.length} 个平台</span></div>
-            <div className="linkCollector"><label>追加平台视频链接<input value={newLink} onChange={(event) => setNewLink(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addPublication(); }} placeholder="粘贴抖音、Bilibili、YouTube 或 TikTok 链接" /></label><button className="primary" disabled={!newLink.trim()} onClick={addPublication}>添加并采集</button></div>
+            <div className="linkCollector"><label>追加平台视频链接<input value={newLink} onChange={(event) => setNewLink(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addPublication(); }} placeholder="粘贴抖音、小红书、Bilibili、YouTube 或 TikTok 链接" /></label><button className="primary" disabled={!newLink.trim()} onClick={addPublication}>添加并采集</button></div>
             {selectedLinks.map((link) => <div className="assetPublication" key={link.id}>
               <div><b>{link.snapshot?.platform || "等待识别"}</b><a href={link.inputUrl} target="_blank" rel="noreferrer">{link.inputUrl}</a></div>
               <div className="assetMetrics">{[["播放","views"],["点赞","likes"],["评论","comments"],["转发","shares"],["收藏","favorites"]].map(([label,key]) => { const value = link.snapshot?.metrics?.[key]; return <span key={key}><small>{label}</small><b>{value == null ? "—" : Number(value).toLocaleString("zh-CN")}</b></span>; })}</div>

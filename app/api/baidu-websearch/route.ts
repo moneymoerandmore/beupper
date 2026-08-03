@@ -247,7 +247,10 @@ function buildTopics(references: any[]) {
     const ranked = [...items].sort((a, b) => b.score - a.score);
     const allText = ranked.map(referenceText).join(" ");
     const markets = [...new Set(ranked.flatMap((item) => detectMarkets(referenceText(item))))];
-    const authorityCount = ranked.filter((item) => authorityPattern.test(referenceText(item))).length;
+    const authorityHosts = new Set(ranked.filter((item) => authorityPattern.test(referenceText(item))).map((item) => {
+      try { return new URL(item.url).hostname; } catch { return item.site_name || item.url || ""; }
+    }).filter(Boolean));
+    const authorityCount = authorityHosts.size;
     const chinaSocialCount = ranked.filter((item) => /微博|抖音|b站|雪球|weibo|douyin|bilibili|xueqiu/i.test(`${referenceText(item)} ${item.query || ""}`)).length;
     const overseasSocialCount = ranked.filter((item) => /reddit|youtube|tiktok|x\.com|wallstreetbets/i.test(`${referenceText(item)} ${item.query || ""}`)).length;
     const socialCount = chinaSocialCount + overseasSocialCount;
