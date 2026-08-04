@@ -53,8 +53,9 @@ export function rankTopic(signal: TopicSignal, now = new Date()): TopicScore {
     signal.chinaSocialPercentile * 0.48 +
     signal.overseasSocialPercentile * 0.52,
   );
+  const dailyMarketMove = signal.eventClass === "market_move";
   const transmission = clamp(
-    (signal.marketCount >= 3 ? 100 : signal.marketCount === 2 ? 78 : 35) +
+    (signal.marketCount >= 3 ? 100 : signal.marketCount === 2 ? 78 : dailyMarketMove && signal.marketCount === 1 ? 68 : 35) +
     (signal.transmissionConfirmed ? 8 : -12),
   );
   const fitAndDepth = clamp(
@@ -71,14 +72,15 @@ export function rankTopic(signal: TopicSignal, now = new Date()): TopicScore {
     socialHeat * 0.18 +
     transmission * 0.17 +
     fitAndDepth * 0.2 -
-    duplicatePenalty + (policyShock ? 12 : 0),
+    duplicatePenalty + (policyShock ? 12 : 0) + (dailyMarketMove ? 8 : 0),
   ));
 
   // 硬门槛比总分更重要，防止“长期热门但今天没发生事”的题目混入。
   if (ageHours > (policyShock ? 72 : 48)) reasons.push(policyShock ? "政策冲击已超过72小时" : "核心事件已超过48小时");
   if (signal.authoritativeSources < (policyShock ? 1 : 2)) reasons.push(policyShock ? "缺少官方或一级信源" : "不足两个独立权威信源");
   if (!policyShock && signal.priceMovePercentile < 70 && socialHeat < 80) reasons.push("价格与讨论度均未达到异常阈值");
-  if (signal.marketCount < 2) reasons.push("不具备跨市场映射");
+  if (!dailyMarketMove && signal.marketCount < 2) reasons.push("不具备跨市场映射");
+  if (dailyMarketMove && signal.marketCount < 1) reasons.push("未识别到明确交易市场");
   if (signal.evidenceQuality < (policyShock ? 55 : 65)) reasons.push("证据链质量不足");
 
   return {
@@ -91,6 +93,7 @@ export function rankTopic(signal: TopicSignal, now = new Date()): TopicScore {
 }
 
 export const topicEngineRules = [
+  { name: "行情入口", rule: "A股、港股、美股每日盘面可独立成题，宏观作为解释层", weight: "优先池" },
   { name: "时效门", rule: "核心事件 ≤ 48h；主推优先 ≤ 24h", weight: "25%" },
   { name: "异动门", rule: "价格异动或讨论增速至少一项进入前20%", weight: "20%" },
   { name: "信源门", rule: "≥ 2个独立权威信源，可追溯到原始信息", weight: "硬门槛" },

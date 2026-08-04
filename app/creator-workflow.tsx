@@ -5,30 +5,60 @@ import { downloadCover } from "./image-download";
 
 const defaultTopic = "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？";
 
-const researchLayers = [
-  { key: "事实", title: "发生了什么", body: "微软财报后单日上涨15.5%，创近18年最佳单日表现；半导体设备公司泛林集团上涨18%，纳指上涨2.8%。随后A股科技方向在白天交易时段出现情绪修复。", status: "双源确认" },
-  { key: "因果", title: "市场为什么这样交易", body: "市场并非重新奖励所有AI投入，而是在奖励“资本开支已经转化为收入和利润”的公司。财报兑现、超跌仓位与空头回补共同放大了反弹。", status: "待持续验证" },
-  { key: "映射", title: "跨市场如何传导", body: "微软云业务和AI回报先修复美股风险偏好，设备股验证上游需求，再由A股半导体、光模块和算力链交易海外映射与高弹性。", status: "A股已验证" },
-  { key: "历史", title: "历史案例", body: "2022年末至2023年初的科技反弹说明：估值修复可以先于盈利见底，但只有订单、资本开支和盈利预测连续上修，反弹才能演化为趋势。", status: "可类比" },
-  { key: "大师", title: "大师观点", body: "霍华德·马克斯强调价格与价值的关系会被市场情绪暂时扭曲；索罗斯的反身性则解释了价格上涨如何改善融资、预期和风险偏好，进一步强化行情。", status: "观点支撑" },
-  { key: "反方", title: "最强反方观点", body: "半导体此前跌幅较深，一天的大涨可能只是拥挤空头回补。若后续公司指引没有继续上修、上涨扩散失败，所谓反转很可能重新退化为震荡。", status: "必须保留" },
-];
-
-function researchForTopic(currentTopic: string) {
+function researchForTopic(currentTopic: string, context: any = {}) {
   const clean = currentTopic.trim() || defaultTopic;
-  const templates = [
-    `围绕“${clean}”整理时间线：谁在什么时候释放了什么信号，哪些是官方原文，哪些只是媒体或市场推测。未获得来源验证的内容必须标记为待确认。`,
-    `解释“${clean}”通过什么变量影响资产价格：汇率、利率、流动性、风险偏好、贸易条件或企业盈利。先写传导机制，再写结论，不能把同时上涨直接当成因果关系。`,
-    `建立跨市场映射：观察美元/日元、日债与日股，再看美股、港股、A股和大宗商品是否出现同向或背离反应。只有存在时间先后和可验证路径，才能称为联动。`,
-    `寻找同类历史事件进行对照，例如历次汇率干预、央行口头干预或政策转向后的资产表现，并明确本次与历史案例的相同点、不同点和不可比之处。`,
-    `用投资大师的框架检验：索罗斯的反身性看预期与价格反馈，芒格的逆向思考看市场共识是否过度，霍华德·马克斯的周期框架看这是趋势变化还是短期波动。观点只作为分析框架，不替代事实证据。`,
-    `提出最强反方：这可能只是技术性波动、仓位调整或新闻噪音，而不是政策级趋势。列出需要继续观察的验证条件：官方后续表态、价格是否扩散、成交与期限结构是否确认，以及其他市场是否跟随。`,
+  const text = clean.toLowerCase();
+  const markets = Array.isArray(context?.markets) && context.markets.length ? context.markets : ["相关市场"];
+  const evidence = Array.isArray(context?.evidence) ? context.evidence : [];
+  const evidenceNames = evidence.slice(0, 5).map((item: any) => `${item.site || "来源待识别"}《${item.title || "标题缺失"}》`).join("；");
+  const thesis = context?.thesis || `表面新闻已经出现，但真正值得讲的是它改变了哪条定价逻辑，以及这种改变能否继续传导。`;
+  const trigger = context?.trigger || "事件触发点仍需从原始信源中确认";
+  const isFx = /日元|汇率|外汇|干预|美元.?日元|yen/.test(text);
+  const isTech = /半导体|芯片|科技|人工智能|\bai\b/.test(text);
+  const isPolicy = /央行|利率|降息|加息|政策|关税|监管/.test(text);
+  const coreConcept = isFx ? "政策信号如何穿透套息交易，进而改变全球资金成本" : isTech ? "这轮上涨究竟是盈利兑现、估值修复，还是仓位回补" : isPolicy ? "政策变化通过哪一个价格变量进入股市，而不是政策口号本身" : "第一反应和真实传导之间的落差";
+  const imageAnchor = isFx ? "一部突然倒转的扶梯：借低息货币买高收益资产的人开始逆向奔跑" : isTech ? "一张开始结账的餐桌：市场不再为菜单买单，只为已经端上来的利润买单" : "一排相连的水箱：新闻只倒进第一个水箱，资金成本决定水能不能流到后面";
+  const retentionUnits = [
+    `单元一｜用“${trigger}”里的最强事实打开，不交代完整背景；收尾把问题转向“市场到底在重新定价什么”。`,
+    `单元二｜拆掉观众最容易相信的表面解释，讲透唯一概念“${coreConcept}”；只保留一条主因果链。`,
+    `单元三｜沿${markets.join(" → ")}寻找真实先后顺序；有价格或时间证据才写联动，没有就写成待验证。`,
+    `单元四｜给一个“原来如此”的转折：最先上涨或下跌的资产未必是最终受益者，它也可能只是仓位最拥挤。`,
+    `单元五｜摆出最强反方和两三个可观察条件，给出当前判断；结尾让观众带走一套观察方法，而不是一句涨跌预测。`,
   ];
-  return researchLayers.map((layer, index) => ({
-    ...layer,
-    title: index === 0 ? `${clean}：发生了什么` : layer.title,
-    body: templates[index],
-  }));
+  return [
+    {
+      key: "事实底座", title: "先确认能说出口的事实", status: "必用 · 硬门",
+      body: `事件：${clean}。触发点：${trigger}。当前摘要：${thesis}。扫描记录为${context?.sourceCount ?? 0}个独立来源、${context?.authorityCount ?? 0}个高可信来源、${context?.socialCount ?? 0}个社交信号。可追溯证据：${evidenceNames || "历史项目未保存原始证据，生成前必须补证"}。数字、人名、时间和政策动作只能从这些原始证据确认，评分不能当作口播事实。`,
+    },
+    {
+      key: "核心概念", title: "一条视频只讲透这一件事", status: "只选一个",
+      body: `建议聚焦：${coreConcept}。与这个概念功能重叠的解释删掉；历史案例、大师观点和行业背景只有在能让这条因果更清楚时才使用，不能为了“显得深”强行凑齐。`,
+    },
+    {
+      key: "平台适配", title: "长稿不是把所有材料平均铺开", status: "写前决策",
+      body: `本项目交付1000—3000字中视频口播。完整稿只围绕一个判断展开；后续拆短版时，从长稿中单独抽出最反常识、最有冲突的一个单元讲透，禁止把整篇平均压缩成五个浅观点。`,
+    },
+    {
+      key: "情绪弧线", title: "信息要推动观众的感受变化", status: "可调整草图",
+      body: `开头让观众因“${clean.slice(0, 34)}”产生紧迫和困惑；中段在“${coreConcept}”处给出原来如此的认知转折；结尾从追涨杀跌的焦虑，转成知道下一步该观察什么的掌控感。情绪服务于事实，不能靠夸张词硬煽动。`,
+    },
+    {
+      key: "留存单元", title: "五个能单独成立、又彼此咬合的单元", status: "动态4—6个",
+      body: retentionUnits.join("\n"),
+    },
+    {
+      key: "信息增量", title: "每一段都要比新闻标题深一层", status: "逐段淘汰",
+      body: `逐段追问：90%的目标观众是否已经知道？如果知道，就增加一种真正有用的东西——有来源的数字和可感知对比、反直觉推论、或再往后一步的市场后果。不能用“大家都知道”的背景消耗时长，也不能把来源数量写进口播冒充信息增量。`,
+    },
+    {
+      key: "表达手艺", title: "给观众留下一个能成像的记忆锚点", status: "可选弹药",
+      body: `可尝试意象：${imageAnchor}。它只有比专业概念更好懂、且符合中国观众日常经验时才保留。博主要用“我”的判断说话，但真实事件与演绎必须分开；没有来源的具体细节宁可删掉，不要编造。`,
+    },
+    {
+      key: "终审护栏", title: "成稿前换一双眼睛", status: "不过即打回",
+      body: `逐项检查：第一句含可搜索主体；关键数据有明确主体和时间；观点后有证据；因果没有跳步；每个设问都有回答且开放问题最多一个；无结构标注和废话过场；标题承诺得到明确回答；结尾给出可执行的观察指标。涉政策与敏感议题按官方口径表达。`,
+    },
+  ];
 }
 
 const packages = [
@@ -196,20 +226,27 @@ function methodologyScriptForTopic(currentTopic: string, data?: any) {
 }
 
 const steps = ["选题确认", "研究底稿", "包装确认", "纯口播稿", "花生成片", "数据回流"];
-const methodologyVersion = 3;
+const methodologyVersion = 5;
 
 export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, startRequestId = 0, editProjectId = "" }: { notify: (message: string) => void; selectedTopic?: string; selectedTopicData?: any; startRequestId?: number; editProjectId?: string }) {
   const [projectId, setProjectId] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [step, setStep] = useState(0);
   const [topic, setTopic] = useState(defaultTopic);
+  const [topicContext, setTopicContext] = useState<any>({});
   const [topicApproved, setTopicApproved] = useState(false);
   const [packageIndex, setPackageIndex] = useState(0);
   const [packageApproved, setPackageApproved] = useState(false);
-  const [script, setScript] = useState(initialScript);
+  const [script, setScript] = useState("");
   const [archived, setArchived] = useState(false);
   const [poeApiKey, setPoeApiKey] = useState("");
   const [poeModel, setPoeModel] = useState("gpt-image-2");
+  const [deepseekApiKey, setDeepseekApiKey] = useState("");
+  const [scriptModel, setScriptModel] = useState("deepseek-v4-pro");
+  const [scriptGenerating, setScriptGenerating] = useState(false);
+  const [scriptWaitSeconds, setScriptWaitSeconds] = useState(0);
+  const [scriptError, setScriptError] = useState("");
+  const [scriptProvenance, setScriptProvenance] = useState<any>(null);
   const [coverPrompt, setCoverPrompt] = useState("");
   const [coverImages, setCoverImages] = useState<{ landscape?: string; portrait?: string }>({});
   const [coverGenerating, setCoverGenerating] = useState(false);
@@ -218,8 +255,16 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [metricResult, setMetricResult] = useState<any>(null);
   const [metricLoading, setMetricLoading] = useState(false);
   const [metricError, setMetricError] = useState("");
-  const currentResearch = useMemo(() => researchForTopic(topic), [topic]);
+  const currentResearch = useMemo(() => researchForTopic(topic, topicContext), [topic, topicContext]);
   const currentPackages = useMemo(() => packagesForTopic(topic), [topic]);
+  const contextEvidenceCount = Array.isArray(topicContext?.evidence) ? topicContext.evidence.length : 0;
+
+  useEffect(() => {
+    if (!scriptGenerating) { setScriptWaitSeconds(0); return; }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setScriptWaitSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [scriptGenerating]);
 
   // 首页点击“用这个选题开稿”后，工坊直接切换到该实时选题；不再继续沿用旧项目标题。
   useEffect(() => {
@@ -231,7 +276,6 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const consumedStartRequestId = Number(window.localStorage.getItem("financial-titan-last-start-request") || 0);
     const explicitRestart = startRequestId > 0 && startRequestId !== consumedStartRequestId;
     const shouldStartFresh = explicitRestart || isNewTopic;
-    const needsMethodologyUpgrade = !shouldStartFresh && current.methodologyVersion !== methodologyVersion;
     if (shouldStartFresh) {
       if (explicitRestart) window.localStorage.setItem("financial-titan-last-start-request", String(startRequestId));
       // 同一次开稿请求始终映射到同一个项目 ID，流程推进只覆盖更新这一条记录。
@@ -241,10 +285,12 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     }
     if (shouldStartFresh) {
       setTopic(nextTopic);
+      setTopicContext(selectedTopicData ? JSON.parse(JSON.stringify(selectedTopicData)) : { title: nextTopic });
       setTopicApproved(false);
       setPackageIndex(0);
       setPackageApproved(false);
-      setScript(methodologyScriptForTopic(selectedTopic, selectedTopicData));
+      setScript("");
+      setScriptProvenance(null);
       setCoverImages({});
       setCoverPrompt("");
       setCoverError("");
@@ -253,8 +299,6 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setMetricResult(null);
       setMetricError("");
       setStep(0);
-    } else if (needsMethodologyUpgrade) {
-      setScript(methodologyScriptForTopic(selectedTopic, selectedTopicData));
     }
   }, [hydrated, selectedTopic, startRequestId]);
 
@@ -273,16 +317,21 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       const saved = JSON.parse(raw);
       setStep(saved.step ?? 0);
       setTopic(saved.topic ?? defaultTopic);
+      setTopicContext(saved.topicContext || { title: saved.topic ?? defaultTopic, note: "历史项目未保存原始扫描上下文" });
       setTopicApproved(Boolean(saved.topicApproved));
       setPackageIndex(saved.packageIndex ?? 0);
       setPackageApproved(Boolean(saved.packageApproved));
-      setScript(saved.script ?? initialScript);
+      setScript(saved.script ?? "");
       setArchived(Boolean(saved.archived));
       setCoverPrompt(saved.coverPrompt || "");
       setCoverImages(saved.coverImages || {});
       setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
+      setDeepseekApiKey(window.localStorage.getItem("financial-titan-deepseek-key") || "");
       const savedModel = window.localStorage.getItem("financial-titan-poe-model");
       setPoeModel(!savedModel || ["image2", "nano-banana-2", "gpt-image-2"].includes(savedModel.toLowerCase()) ? "gpt-image-2" : savedModel);
+      const savedScriptModel = window.localStorage.getItem("financial-titan-script-model") || "";
+      const normalizedScriptModel = savedScriptModel.trim().toLowerCase();
+      setScriptModel(["deepseek-v4-pro", "deepseek-v4-flash"].includes(normalizedScriptModel) ? normalizedScriptModel : "deepseek-v4-pro");
     } catch {}
     setHydrated(true);
   }, []);
@@ -290,7 +339,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   useEffect(() => {
     if (!hydrated || !projectId) return;
     window.localStorage.setItem("financial-titan-workflow", JSON.stringify({
-      methodologyVersion, step, topic, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages,
+      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages,
     }));
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
     const record = {
@@ -298,7 +347,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       createdAt: projects.find((item: any) => item.id === projectId)?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       methodologyVersion,
-      step, topic, topicApproved, packageIndex, packageApproved, script, archived,
+      step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived,
       research: currentResearch,
       packaging: currentPackages[packageIndex],
       coverPrompt, coverImages,
@@ -306,13 +355,16 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const index = projects.findIndex((item: any) => item.id === projectId);
     if (index >= 0) projects[index] = record; else projects.unshift(record);
     window.localStorage.setItem("financial-titan-projects", JSON.stringify(projects));
-  }, [hydrated, projectId, step, topic, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages]);
+  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages]);
 
   useEffect(() => {
     if (poeApiKey) window.localStorage.setItem("financial-titan-poe-key", poeApiKey);
     else window.localStorage.removeItem("financial-titan-poe-key");
+    if (deepseekApiKey) window.localStorage.setItem("financial-titan-deepseek-key", deepseekApiKey);
+    else window.localStorage.removeItem("financial-titan-deepseek-key");
     window.localStorage.setItem("financial-titan-poe-model", poeModel);
-  }, [poeApiKey, poeModel]);
+    window.localStorage.setItem("financial-titan-script-model", scriptModel);
+  }, [poeApiKey, deepseekApiKey, poeModel, scriptModel]);
 
   // peanutcut methodology：封面控制观众的 0.5 秒，基因层固定，变量层只换文案与视觉锤。
   useEffect(() => {
@@ -338,15 +390,15 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const oralChecks = [
     { label: "长度在1000—3000字", ok: cleanLength >= 1000 && cleanLength <= 3000 },
     { label: "没有章节或分镜标签", ok: !/[【\[]?(镜头|画面|章节|Hook|开头)[】\]]?/i.test(script) },
-    { label: "六层研究融入叙事，不按层报菜名", ok: !/第[一二三四五六123456]层|事实层|因果层|映射层|历史层|大师层|反方层/.test(script) },
+    { label: "创作底稿只在幕后，不按卡片报菜名", ok: !/事实底座|核心概念层|情绪弧线|留存单元|信息增量层|终审护栏/.test(script) },
     { label: "使用中文标点", ok: !/[A-Za-z\u4e00-\u9fa5][,.!?][\u4e00-\u9fa5]/.test(script) },
-    { label: "包含反方观点与验证条件", ok: /最强的反方|可能只是/.test(script) && /确认|验证/.test(script) },
-    { label: "开头含当前选题主体", ok: script.slice(0, 120).includes(topic.slice(0, 8)) },
+    { label: "给出边界或验证条件", ok: /如果|除非|一旦|验证|确认|观察/.test(script) },
+    { label: "开头含可搜索主体", ok: script.slice(0, 160).includes(currentPackages[packageIndex].keyword) || script.slice(0, 160).includes(topic.slice(0, 6)) },
     { label: "避免AI腔排比否定", ok: !/不是[^。]{0,25}不是[^。]{0,25}而是/.test(script) },
-    { label: "具备4个以上留存单元", ok: script.split(/\n\s*\n/).filter(Boolean).length >= 8 },
-    { label: "开放问题最多一个", ok: (script.match(/？/g) || []).length <= 1 },
+    { label: "段落形成自然留存节奏", ok: script.split(/\n\s*\n/).filter(Boolean).length >= 6 },
+    { label: "避免连续套路式设问", ok: (script.match(/？/g) || []).length <= 3 },
   ];
-  const scriptReady = oralChecks.every((item) => item.ok);
+  const oralWarningCount = oralChecks.filter((item) => !item.ok).length;
 
   function approveTopic() {
     setTopicApproved(true);
@@ -354,10 +406,59 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     notify("选题已通过 Gate 1，研究底稿可以继续");
   }
 
-  function approvePackage() {
+  async function approvePackage() {
     setPackageApproved(true);
     setStep(3);
-    notify("标题、封面与 Hook 已通过 Gate 2");
+    if (deepseekApiKey.trim()) await generateScript();
+    else notify("包装已确认；填写 DeepSeek API Key 后即可生成口播稿");
+  }
+
+  async function generateScript() {
+    if (!deepseekApiKey.trim()) {
+      setScriptError("请先填写 DeepSeek API Key。");
+      return;
+    }
+    setScriptGenerating(true);
+    setScriptError("");
+    setScriptProvenance(null);
+    try {
+      const response = await fetch("http://127.0.0.1:4318/generate-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey: deepseekApiKey,
+          model: scriptModel || "deepseek-v4-pro",
+          topic,
+          topicContext,
+          research: currentResearch,
+          packaging: currentPackages[packageIndex],
+          packagingOptions: currentPackages,
+          workflowContext: {
+            topicApproved,
+            packageApproved,
+            editorialJudgment: `围绕“${topic}”区分已确认事实、市场推断和待验证条件；重点解释跨市场传导，而不是复述新闻。`,
+            targetLength: "1000—3000个汉字",
+            outputForm: "可直接交给花生AI的纯口播正文",
+          },
+        }),
+        signal: AbortSignal.timeout(600_000),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "大模型写稿失败");
+      const receipts = payload?.provenance?.receipts;
+      if (!Array.isArray(receipts) || receipts.length === 0 || !receipts.every((item: any) => item?.responseId)) {
+        throw new Error("DeepSeek 未返回可核验的生成回执，本次结果已拒绝写入。旧稿未更新。");
+      }
+      setScript(payload.script);
+      setScriptProvenance(payload.provenance);
+      if (payload.warning) setScriptError(payload.warning);
+      notify(`${payload.model} 已完成主笔创作和独立终审`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "大模型写稿失败";
+      setScriptError(/timeout|aborted/i.test(message) ? "写稿与自动成稿修复总等待超过10分钟，已停止等待。请稍后重试。" : message);
+    } finally {
+      setScriptGenerating(false);
+    }
   }
 
   async function copyScript() {
@@ -487,13 +588,13 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
 
       {step === 1 && (
         <section className="studioPanel">
-          <div className="studioTitle"><div><p className="eyebrow">RESEARCH BRIEF</p><h2>六层证据链</h2></div><button className="primary" onClick={() => setStep(2)}>研究完成，进入包装 →</button></div>
+          <div className="studioTitle"><div><p className="eyebrow">PEANUTCUT CREATIVE BRIEF</p><h2>动态创作底稿</h2></div><button className="primary" onClick={() => setStep(2)}>底稿确认，进入包装 →</button></div>
           <div className="researchGrid">
             {currentResearch.map((layer) => (
               <article key={layer.key}><div><b>{layer.key}</b><em>{layer.status}</em></div><h3>{layer.title}</h3><p>{layer.body}</p></article>
             ))}
           </div>
-          <div className="researchConclusion"><b>一句话判断</b><p>“{topic}”目前先按事件冲击处理：确认事实、价格反应和跨市场传导后，再判断这是趋势变化、情绪修复，还是一次性噪音。</p></div>
+          <div className="researchConclusion"><b>使用原则</b><p>底稿不是正文目录，也不是八项必答题。事实底座和终审护栏是硬门；核心概念只选一个；情绪弧线与留存单元可以根据证据调整；历史案例、大师观点和意象没有增量就直接舍弃。</p></div>
         </section>
       )}
 
@@ -568,23 +669,27 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
 
       {step === 3 && (
         <section className="studioPanel scriptPanel">
-          <div className="studioTitle"><div><p className="eyebrow">PEANUT-READY SCRIPT</p><h2>纯口播编辑器</h2></div><div className="wordCount"><b>{cleanLength}</b> 字</div></div>
+          <div className="studioTitle"><div><p className="eyebrow">DEEPSEEK · PEANUTCUT METHOD</p><h2>大模型纯口播创作</h2></div><div className="wordCount"><b>{cleanLength}</b> 字</div></div>
+          <div className="poeConfig">
+            <label>DeepSeek API Key<input type="password" value={deepseekApiKey} onChange={(event) => setDeepseekApiKey(event.target.value)} placeholder="仅保存在当前浏览器" autoComplete="off" /></label>
+            <label>写稿模型<select value={scriptModel} onChange={(event) => setScriptModel(event.target.value)}><option value="deepseek-v4-pro">DeepSeek V4 Pro（推荐）</option><option value="deepseek-v4-flash">DeepSeek V4 Flash（更快）</option></select></label>
+            <button className="primary" disabled={scriptGenerating || !deepseekApiKey.trim()} onClick={generateScript}>{scriptGenerating ? `模型处理中 · ${scriptWaitSeconds}秒` : script ? "用大模型重新创作" : "用大模型生成口播稿"}</button>
+          </div>
+          {scriptError && <p className="coverError">{scriptError}</p>}
+          {scriptProvenance ? (
+            <p className="keyNotice">已核验 DeepSeek API 调用：{scriptProvenance.callCount} 次 · 实际模型 {scriptProvenance.receipts?.[0]?.actualModel || scriptModel} · 回执 {scriptProvenance.receipts?.map((item: any) => item.responseId).join("、")}</p>
+          ) : script ? (
+            <p className="coverError">当前文本是此前保留的旧稿，不代表本次 DeepSeek 调用成功；只有出现 DeepSeek 回执后才是新生成稿。</p>
+          ) : null}
+          <div className="researchConclusion"><b>本次发送给模型的完整上下文</b><p>原始热点事件、事件摘要、触发时间与新鲜度、{topicContext?.markets?.length || 0} 个涉及市场、来源与社交统计、{contextEvidenceCount} 条原始证据、硬门和评分依据、动态创作底稿、已选标题、Hook、核心矛盾、搜索锚点及交付要求。历史项目若当时未保存原始扫描数据，会明确标记而不会伪造补齐。</p></div>
+          <p className="keyNotice">动态创作底稿是写前决策与可选弹药，不是正文结构。系统围绕一个核心概念创作，再由独立总编终审；不会逐卡片扩写。</p>
           <div className="scriptLayout">
-            <textarea value={script} onChange={(event) => setScript(event.target.value)} aria-label="纯口播稿" />
+            <textarea value={script} onChange={(event) => setScript(event.target.value)} aria-label="纯口播稿" placeholder={scriptGenerating ? "DeepSeek 正在完成主笔创作和独立终审，请稍候……" : "填写 DeepSeek API Key，然后点击“用大模型生成口播稿”。"} />
             <aside>
               <h3>花生AI交付检查</h3>
               {oralChecks.map((item) => <span className={item.ok ? "ok" : "bad"} key={item.label}><i>{item.ok ? "✓" : "!"}</i>{item.label}</span>)}
-              <p>这里只保留会被念出来的话。研究来源、章节名、镜头和素材说明不进入口播区。</p>
-              <div className="retentionUnits">
-                <b>留存单元</b>
-                <span>1. 暴涨事实 → 奖励机制变了</span>
-                <span>2. AI投入 → 开始算回报</span>
-                <span>3. 美股信号 → A股映射</span>
-                <span>4. 反转条件 → 三项验证</span>
-                <span>5. 大师框架 → 新阶段判断</span>
-              </div>
-              <button className="ghost wide" onClick={copyScript}>复制纯口播稿</button>
-              <button className="primary wide" disabled={!scriptReady} onClick={() => setStep(4)}>通过校验，交接花生 →</button>
+              <p>{oralWarningCount ? `当前有 ${oralWarningCount} 项编辑提醒，仅供你判断，不阻止继续。` : "当前没有发现明显的口播交付问题。"} 最终是否采纳由你决定。</p>
+              <button className="primary wide" disabled={!script.trim() || scriptGenerating} onClick={() => setStep(4)}>{oralWarningCount ? "保留提醒，继续交接花生 →" : "交接花生 →"}</button>
             </aside>
           </div>
         </section>

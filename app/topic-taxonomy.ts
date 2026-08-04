@@ -7,8 +7,11 @@ export type MarketDomain = {
   channels: string[];
 };
 
-// 影响股票定价的事件地图：先按传导源找事件，再按行业/公司落点找机会。
+// 日更账号先从市场盘面发现“今天发生了什么”，再用宏观与产业事件解释“为什么”。
 export const marketDomains: MarketDomain[] = [
+  { key: "a_share_session", label: "A股每日行情", terms: ["A股", "沪指", "上证指数", "深成指", "创业板", "科创50", "两市成交", "主力资金", "涨停", "跌停", "北向资金"], markets: ["A股"], query: "A股 今日 盘中 收盘 指数 涨跌 成交额 领涨板块 资金流向", channels: ["成交", "资金风格", "行业轮动", "盈利预期"] },
+  { key: "hk_session", label: "港股每日行情", terms: ["港股", "恒生指数", "恒生科技", "国企指数", "南向资金", "港股通"], markets: ["港股"], query: "港股 今日 盘中 收盘 恒生指数 恒生科技 涨跌 领涨板块 南向资金", channels: ["南向资金", "互联网权重", "美元流动性", "风险偏好"] },
+  { key: "us_session", label: "美股每日行情", terms: ["美股", "标普500", "纳斯达克", "纳指", "道琼斯", "费城半导体", "罗素2000", "wall street"], markets: ["美股"], query: "美股 隔夜 收盘 标普 纳指 道指 涨跌 领涨板块 成交 市场复盘", channels: ["利率", "盈利预期", "科技权重", "风险偏好"] },
   { key: "monetary_policy", label: "货币政策", terms: ["美联储", "联储", "fed", "fomc", "降息", "加息", "央行", "日本央行", "boj", "欧洲央行", "ecb", "存款准备金", "lpr"], markets: ["美股", "A股", "港股", "债券", "外汇"], query: "央行 利率 决议 降息 加息 政策信号 全球股市", channels: ["贴现率", "利率", "估值", "汇率"] },
   { key: "fx_intervention", label: "外汇与汇率", terms: ["汇率", "外汇", "美元兑日元", "美元日元", "日元", " yen", "usd/jpy", "美元指数", "dxy", "汇市干预", "外汇干预", "联合干预", "汇率询价", "财务省", "treasury", "currency intervention"], markets: ["外汇", "美股", "日股", "A股", "港股", "债券"], query: "美元 日元 汇率 外汇干预 美日 财政部 央行 最新", channels: ["汇率", "利差", "出口", "全球流动性"] },
   { key: "fiscal_economic", label: "财政与经济政策", terms: ["财政", "预算", "赤字", "刺激", "基建", "经济数据", "gdp", "cpi", "ppi", "就业", "非农", "失业率", "通胀", "通缩", "关税", "贸易政策"], markets: ["美股", "A股", "港股", "大宗商品", "债券"], query: "最新 财政政策 经济数据 通胀 就业 关税 股市影响", channels: ["盈利", "利率", "风险溢价", "商品"] },
@@ -29,6 +32,12 @@ export function classifyDomains(text: string) {
 
 export function discoveryQueries() {
   return [
+    "A股 今日 午盘 收盘 主要指数 成交额 涨跌家数 领涨领跌板块 异动原因",
+    "A股 今日 主线题材 行业板块 涨停跌停 主力资金 北向资金 市场复盘",
+    "港股 今日 午盘 收盘 恒生指数 恒生科技 南向资金 领涨领跌 异动原因",
+    "港股 今日 科技股 医药 消费 金融 地产 板块行情 市场复盘",
+    "美股 隔夜 收盘 标普500 纳斯达克 道琼斯 费城半导体 涨跌原因",
+    "美股 盘前 盘后 财报 龙头股 板块轮动 市场焦点 今日",
     "过去48小时 全球金融市场 最大热点 股市 汇率 利率 债券 商品 政策",
     ...marketDomains.map((domain) => domain.query),
     "weekend global markets biggest financial event stocks forex rates policy",

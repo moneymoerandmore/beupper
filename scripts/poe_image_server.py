@@ -2,6 +2,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from poe_image import generate
+from poe_script import generate_script
 
 
 HOST = "127.0.0.1"
@@ -25,18 +26,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self.send_json(200, {"ok": True, "service": "poe-python"})
+            self.send_json(200, {"ok": True, "service": "local-ai-gateway", "writing": "deepseek", "images": "poe"})
         else:
             self.send_json(404, {"error": "Not found"})
 
     def do_POST(self):
-        if self.path != "/generate":
+        if self.path not in ("/generate", "/generate-script"):
             self.send_json(404, {"error": "Not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request_data = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = generate(request_data)
+            result = generate_script(request_data) if self.path == "/generate-script" else generate(request_data)
             status = 200 if result.get("ok") else int(result.get("status", 502))
             self.send_json(status if status == 200 or 400 <= status < 600 else 502, result)
         except Exception as error:
@@ -47,5 +48,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Poe Python image service: http://{HOST}:{PORT}", flush=True)
+    print(f"Poe Python media and writing service: http://{HOST}:{PORT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

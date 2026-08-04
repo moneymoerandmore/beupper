@@ -3,15 +3,22 @@ import { rankTopic } from "../../topic-engine";
 
 export const runtime = "edge";
 
-// 采集层优先追求召回率：同一领域使用“事件/价格/政策”三种视角检索，
-// 后续再交给 FinanceMCP 风格内容去重与事件聚合，不能在入口处过早裁剪。
-const scanQueries = [...new Set(discoveryQueries().flatMap((query) => [
-  query,
-  `${query} 官方 公告 原文`,
-  `${query} 价格 异动 市场反应`,
-]))];
+// 广度来自互不相同的市场入口，而不是把同一查询机械扩成三个近义版本。
+// 查询带北京时间当天日期；A股收盘后明确要求当天收盘稿，避免昨天复盘占据首位。
+function buildScanQueries(now = new Date()) {
+  const chinaNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const dateLabel = `${chinaNow.getUTCFullYear()}年${chinaNow.getUTCMonth() + 1}月${chinaNow.getUTCDate()}日`;
+  const afterAShareClose = chinaNow.getUTCHours() >= 15;
+  return [...new Set(discoveryQueries().map((query) => {
+    const aShareCloseIntent = afterAShareClose && /A股|沪指|上证|深成指|创业板|科创|两市/.test(query);
+    return `${dateLabel} ${query} ${aShareCloseIntent ? "今日收盘 收盘后发布" : "过去48小时"}`;
+  }))];
+}
 
 const entityGroups = [
+  { key: "A股行情", terms: ["A股", "沪指", "上证指数", "深成指", "创业板", "科创50", "两市成交", "涨停", "跌停"] },
+  { key: "港股行情", terms: ["港股", "恒生指数", "恒生科技", "国企指数", "南向资金", "港股通"] },
+  { key: "美股行情", terms: ["美股", "标普500", "纳斯达克", "纳指", "道琼斯", "费城半导体", "罗素2000"] },
   { key: "半导体", terms: ["半导体", "芯片", "英伟达", "台积电", "费城半导体", "光模块", "算力", "存储", "设备"] },
   { key: "AI", terms: ["人工智能", "ai", "大模型", "云计算", "微软", "meta", "谷歌", "openai"] },
   { key: "港股科技", terms: ["恒生科技", "港股科技", "腾讯", "阿里", "美团", "小米"] },
@@ -36,8 +43,9 @@ async function search(apiKey: string, query: string, topK = 50) {
     search_source: "baidu_search_v2",
     resource_type_filter: [
       { type: "web", top_k: topK },
-      { type: "video", top_k: Math.min(20, topK) },
+      { type: "video", top_k: Math.min(5, topK) },
     ],
+    // web_search 当前只稳定接受 week/month/semiyear/year；精确48小时在召回后本地硬过滤。
     search_recency_filter: "week",
     sort: { priority: "auto" },
   });
@@ -96,8 +104,13 @@ function scoreReference(reference: any) {
   if (/美股|a股|港股|纳指|标普|半导体|芯片|科技|ai|nasdaq|semiconductor/.test(text)) score += 20;
   if (/微博|抖音|b站|雪球|reddit|youtube|tiktok|x\.com/.test(`${text} ${url}`)) score += 15;
   if (/reuters|bloomberg|cnbc|财联社|证券时报|上证报|交易所|sec\.gov/.test(`${text} ${url}`)) score += 10;
-  const publishedAt = parseReferenceDate(reference.date);
-  if (publishedAt && Date.now() - publishedAt.getTime() <= 48 * 60 * 60 * 1000) score += 20;
+  const publishedAt = parseReferenceDate(reference.date || reference.published_time || reference.publish_time);
+  if (publishedAt) {
+    const ageHours = (Date.now() - publishedAt.getTime()) / 3_600_000;
+    if (ageHours >= 0 && ageHours <= 6) score += 35;
+    else if (ageHours <= 24) score += 24;
+    else if (ageHours <= 48) score += 8;
+  }
   return Math.min(100, score);
 }
 
@@ -109,8 +122,21 @@ function parseReferenceDate(value: unknown) {
 }
 
 function isFreshReference(reference: any) {
-  const date = parseReferenceDate(reference.date);
-  return Boolean(date && Date.now() - date.getTime() >= 0 && Date.now() - date.getTime() <= 48 * 60 * 60 * 1000);
+  const date = parseReferenceDate(reference.date || reference.published_time || reference.publish_time);
+  if (!date) return false;
+  const ageMs = Date.now() - date.getTime();
+  if (ageMs < 0 || ageMs > 48 * 60 * 60 * 1000) return false;
+  const chinaNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const afterAShareClose = chinaNow.getUTCHours() >= 15;
+  const isAShareCloseQuery = /A股|沪指|上证|深成指|创业板|科创|两市/.test(reference.query || "") && /今日收盘|收盘后发布/.test(reference.query || "");
+  if (afterAShareClose && isAShareCloseQuery) {
+    const chinaPublished = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+    const sameChinaDate = chinaPublished.getUTCFullYear() === chinaNow.getUTCFullYear()
+      && chinaPublished.getUTCMonth() === chinaNow.getUTCMonth()
+      && chinaPublished.getUTCDate() === chinaNow.getUTCDate();
+    if (!sameChinaDate) return false;
+  }
+  return true;
 }
 
 function referenceText(reference: any) {
@@ -191,9 +217,9 @@ function eventFingerprint(reference: any) {
 
 function detectMarkets(text: string) {
   const markets: string[] = [];
-  if (/美股|纳指|标普|道指|nasdaq|s&p|wall street|英伟达|微软|meta/i.test(text)) markets.push("美股");
-  if (/港股|恒生|南向|腾讯|阿里|美团|小米/i.test(text)) markets.push("港股");
-  if (/a股|沪指|深成指|创业板|科创板|北向|涨停/i.test(text)) markets.push("A股");
+  if (/美股|纳指|纳斯达克|标普|道指|道琼斯|费城半导体|罗素2000|nasdaq|s&p|wall street|英伟达|微软|meta/i.test(text)) markets.push("美股");
+  if (/港股|恒生|国企指数|南向|港股通|腾讯|阿里|美团|小米/i.test(text)) markets.push("港股");
+  if (/a股|沪指|上证指数|深成指|创业板|科创板|科创50|两市成交|北向|涨停|跌停/i.test(text)) markets.push("A股");
   if (/日元|日本|美元兑日元|boj|日本央行|财务省|yen|usd\/jpy/i.test(text)) markets.push("日股", "外汇");
   if (/汇率|外汇|美元指数|dxy|currency|forex/i.test(text)) markets.push("外汇");
   if (/美债|国债|收益率|债券|yield|treasury/i.test(text)) markets.push("债券");
@@ -213,6 +239,9 @@ function buildTopicTitle(key: string, markets: string[], leadTitle: string, cont
   const centralBank = text.match(/美联储|日本央行|日本银行|中国人民银行|央行|Fed|BOJ|FOMC|ECB/i)?.[0] || "央行";
   const company = text.match(/英伟达|微软|Meta|谷歌|苹果|台积电|腾讯|阿里|美团|小米|英特尔|AMD/i)?.[0];
   const templates: Record<string, string> = {
+    A股行情: `A股今天的涨跌不是重点：资金正在从哪些板块撤出，又流向哪里？`,
+    港股行情: `港股今天谁在领涨、谁在拖累：南向资金与外资在交易什么？`,
+    美股行情: `昨夜美股真正的主线是什么：指数涨跌背后，资金风格变了吗？`,
     半导体: `${cross}：半导体这轮行情是趋势确认，还是情绪反弹？`,
     AI: `${cross}：AI交易重新升温，市场真正奖励的是什么？`,
     港股科技: `港股科技出现强信号：会不会继续映射A股与美股科技？`,
@@ -222,6 +251,9 @@ function buildTopicTitle(key: string, markets: string[], leadTitle: string, cont
   };
   const domainKey = key.split(":")[0];
   const domainTemplates: Record<string, string> = {
+    a_share_session: `A股今日复盘：指数、成交和板块轮动透露了哪条真正主线？`,
+    hk_session: `港股今日复盘：恒指与恒生科技为何分化，资金下一步看什么？`,
+    us_session: `美股隔夜复盘：三大指数背后，盈利、利率和科技交易谁在主导？`,
     fx_intervention: `${isConfirmed ? "美日官方确认" : isSignal ? "美日官员释放" : "美日市场出现"}汇率干预信号，美元兑日元快速波动：这是短期救火，还是全球资金风向变了？`,
     monetary_policy: `${centralBank}${isConfirmed ? "正式调整" : isSignal ? "释放政策信号" : "政策预期升温"}，利率与流动性预期变化：股市估值会先重估还是盈利先变化？`,
     fiscal_economic: `财政与经济数据出现新信号：市场先交易利率，还是先交易企业盈利？`,
@@ -262,12 +294,15 @@ function buildTopics(references: any[]) {
       ? "policy_shock" as const
       : ["liquidity", "rates_bonds"].includes(domain?.key || "") ? "liquidity_shock" as const
         : ["corporate_earnings"].includes(domain?.key || "") ? "corporate_event" as const
-          : "theme" as const;
+          : ["a_share_session", "hk_session", "us_session"].includes(domain?.key || "") ? "market_move" as const
+            : "theme" as const;
     const occurredAt = ranked.map((item) => item.date || item.published_time || item.publish_time).find(Boolean) || new Date().toISOString();
     const priceMovePercentile = intensityCount ? (markets.length >= 3 ? 92 : 82) : 55;
     const chinaSocialPercentile = Math.min(100, chinaSocialCount * 28 + (chinaSocialCount ? 18 : 0));
     const overseasSocialPercentile = Math.min(100, overseasSocialCount * 28 + (overseasSocialCount ? 18 : 0));
-    const accountFit = domain?.key === "technology_sector" || domain?.key === "fx_intervention" || domain?.key === "monetary_policy" || domain?.key === "liquidity" ? 92 : 78;
+    const accountFit = ["a_share_session", "hk_session", "us_session"].includes(domain?.key || "")
+      ? 96
+      : domain?.key === "technology_sector" || domain?.key === "fx_intervention" || domain?.key === "monetary_policy" || domain?.key === "liquidity" ? 92 : 78;
     const engineScore = rankTopic({
       occurredAt,
       authoritativeSources: authorityCount,
@@ -363,6 +398,7 @@ export async function POST(request: Request) {
       const result = await search(apiKey, "今日全球资本市场热点", 3);
       return Response.json({ ok: true, requestId: result.requestId, resultCount: result.references.length, sample: result.references.slice(0, 3) });
     }
+    const scanQueries = buildScanQueries();
     const batches: { query: string; requestId?: string; references: any[] }[] = [];
     let previousRequestAt = 0;
     for (const query of scanQueries) {
@@ -370,13 +406,16 @@ export async function POST(request: Request) {
       previousRequestAt = response.requestedAt;
       batches.push(response.result);
     }
-    const seen = new Set<string>();
-    const rawReferences = batches.flatMap((batch) => batch.references.map((reference: any) => ({
+    const collectedReferences = batches.flatMap((batch) => batch.references.map((reference: any) => ({
       ...reference,
       site_name: reference.website || reference.site_name || "",
       query: batch.query,
       score: scoreReference(reference),
-    }))).filter((reference: any) => {
+    })));
+    const timeScopedReferences = collectedReferences.filter(isFreshReference);
+    const timeFilteredOut = collectedReferences.length - timeScopedReferences.length;
+    const seen = new Set<string>();
+    const rawReferences = timeScopedReferences.filter((reference: any) => {
       const key = reference.url || reference.title;
       if (!key || seen.has(key)) return false;
       seen.add(key);
@@ -390,6 +429,9 @@ export async function POST(request: Request) {
       scannedAt: new Date().toISOString(),
       queryCount: scanQueries.length,
       references,
+      collectedReferenceCount: collectedReferences.length,
+      timeFilteredOut,
+      timeWindowHours: 48,
       rawReferenceCount: rawReferences.length,
       contentDedupCount: references.length,
       passed: references.filter((item: any) => item.score >= 45),
