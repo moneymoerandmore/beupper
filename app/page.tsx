@@ -202,15 +202,15 @@ export default function Home() {
 
         <section className="engineCard">
           <div className="sectionTitle">
-            <div><p className="eyebrow">TOPIC ENGINE V2</p><h2>先过硬门槛，再按事件强度排序</h2></div>
+            <div><p className="eyebrow">TOPIC ENGINE V3</p><h2>先形成完整事件全集，再按当日价值排序</h2></div>
             <span className="engineVersion">{liveScan ? `实时扫描完成 · ${new Date(liveScan.scannedAt).toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}` : baiduConnected ? "百度 WebSearch 已接入 · 等待扫描" : "评分规则已配置 · 数据源待接入"}</span>
           </div>
           <div className="engineFlow">
-            <span><b>01</b>采集事件<small>行情·公告·新闻·社媒</small></span>
-            <i>→</i><span><b>02</b>事件聚类<small>同一事件合并去重</small></span>
-            <i>→</i><span><b>03</b>硬门筛除<small>时间·信源·异动·联动</small></span>
-            <i>→</i><span><b>04</b>动态评分<small>热度增速而非绝对热度</small></span>
-            <i>→</i><span><b>05</b>编辑判断<small>形成可证伪命题</small></span>
+            <span><b>01</b>覆盖矩阵<small>市场·政策·公司·产业·跨资产</small></span>
+            <i>→</i><span><b>02</b>动态理解<small>实体·动作·对象·阶段</small></span>
+            <i>→</i><span><b>03</b>事件标准化<small>同一事件合并，不同动作拆开</small></span>
+            <i>→</i><span><b>04</b>完整诊断<small>过滤·去重·归属全可追踪</small></span>
+            <i>→</i><span><b>05</b>纯排序<small>评分不再删除事件</small></span>
           </div>
           <div className="ruleGrid">
             {topicEngineRules.map((item) => (
@@ -218,10 +218,10 @@ export default function Home() {
             ))}
           </div>
           <div className="engineFoot">
-            <span><b>主推</b> ≥ 85分且全部过门</span>
-            <span><b>备选</b> 75—84分</span>
-            <span><b>观察</b> 未完成跨市场验证</span>
-            <span><b>自动淘汰</b> 超48小时无新增催化</span>
+            <span><b>事件全集</b> 所有已标准化事件</span>
+            <span><b>立即做</b> 排名前三</span>
+            <span><b>备选</b> 排名四至六</span>
+            <span><b>诊断提醒</b> 不阻止事件被发现</span>
           </div>
         </section>
 
@@ -233,7 +233,7 @@ export default function Home() {
             </div>
             <div className="topicList">
               {!liveScan && <div className="emptyTopics"><b>先验证百度 WebSearch，再扫描今日热点</b><span>扫描前不展示静态选题，避免把演示数据当成实时判断。</span></div>}
-              {liveScan && topics.length === 0 && <div className="emptyTopics"><b>本轮没有选题通过硬门槛</b><span>当前没有同时满足双来源、权威信源、近期催化与明确异动的事件。</span></div>}
+              {liveScan && topics.length === 0 && <div className="emptyTopics"><b>本轮没有形成可理解的财经事件</b><span>请在召回诊断中检查时间过滤、未分类证据和语义引擎回执。</span></div>}
               {topics.map((topic, i) => (
                 <button className={`topic ${selected === topic.id ? "selected" : ""}`} key={topic.id} onClick={() => setSelected(topic.id)}>
                   <div className={`rank ${topic.accent}`}>0{i + 1}</div>
