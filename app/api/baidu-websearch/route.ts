@@ -1,5 +1,5 @@
 import { discoveryQueries } from "../../topic-taxonomy";
-import { deriveMarketFollowUpQueries, scoreSemanticEvent, standardizeFinancialEvents } from "../../hotspot-semantic";
+import { buildCausalAnalysisTopics, deriveMarketFollowUpQueries, scoreCausalAnalysisTopic, scoreSemanticEvent, standardizeFinancialEvents } from "../../hotspot-semantic";
 
 export const runtime = "edge";
 
@@ -163,8 +163,26 @@ export async function POST(request: Request) {
         evidence: eventEvidence.map((item) => ({ title: item.title, url: item.url, site: item.site, score: 0 })),
       };
     }).sort((a, b) => b.score - a.score);
-    const events = ranked.map((event, index) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: index < 6, status: index < 3 ? "立即做" : index < 6 ? "备选" : "已发现" }));
-    const topics = events.slice(0, 6).map((event, index) => ({ ...event, id: index + 1 }));
+    const events = ranked.map((event, index) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));
+    const causal = await buildCausalAnalysisTopics(deepseekApiKey, events);
+    const eventById = new Map(events.flatMap((event: any) => [[event.id, event], [event.eventId, event]]));
+    const topics = causal.topics.map((analysis, index) => {
+      const linkedEvents = [...new Set([...analysis.observedEventIds, ...analysis.causalEventIds])]
+        .map((id) => eventById.get(id)).filter(Boolean) as any[];
+      const evidence = [...new Map(linkedEvents.flatMap((event) => event.evidence || []).map((item: any) => [item.url || item.title, item])).values()];
+      const sourceCount = new Set(evidence.map((item: any) => item.site || item.url).filter(Boolean)).size;
+      const authorityCount = linkedEvents.reduce((sum, event) => sum + (event.authorityCount || 0), 0);
+      const score = scoreCausalAnalysisTopic(analysis);
+      return {
+        ...analysis, id: index + 1, score, title: analysis.title,
+        thesis: `${analysis.mechanism}${analysis.counterEvidence ? ` 反证是：${analysis.counterEvidence}` : ""}`,
+        category: "原因分析", markets: analysis.markets, trigger: `${analysis.causality} · ${analysis.verificationSignals.join("、")}`,
+        sourceCount, authorityCount, socialCount: linkedEvents.reduce((sum, event) => sum + (event.socialCount || 0), 0),
+        heat: analysis.marketImportance, fit: analysis.explanatoryPower, depth: analysis.evidenceStrength,
+        freshness: "基于本轮事件全集", gates: { hardGate: true, reasons: [] }, rejectionReasons: [], evidence,
+        observedEvents: analysis.observedEventIds, causalEvents: analysis.causalEventIds,
+      };
+    }).sort((a, b) => b.score - a.score).slice(0, 6).map((topic, index) => ({ ...topic, id: index + 1, status: index < 3 ? "立即做" : "备选" }));
     const eventForEvidence = new Map<string, string>(); events.forEach((event) => event.evidenceIds.forEach((id) => eventForEvidence.set(id, event.eventId)));
     const unclassified = new Set(semantic.unclassifiedEvidenceIds); const retainedIds = new Set(references.map((item: any) => item.traceId));
     const traces = collected.map((item) => ({
@@ -181,7 +199,7 @@ export async function POST(request: Request) {
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
       topics, rejectedTopics: [], events, discoveredEventCount: events.length,
       categoryCoverage: [...new Set(events.map((item) => item.category || "other"))], mainTopicCount: Math.min(3, topics.length),
-      semanticReceipts: semantic.receipts, followUpSemanticReceipt: followUp.receipt,
+      semanticReceipts: semantic.receipts, followUpSemanticReceipt: followUp.receipt, causalSemanticReceipt: causal.receipt,
       diagnostics: { traces, counts, unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds },
       requestIds: batches.map((batch) => batch.requestId),
     });

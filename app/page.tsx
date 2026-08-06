@@ -202,15 +202,15 @@ export default function Home() {
 
         <section className="engineCard">
           <div className="sectionTitle">
-            <div><p className="eyebrow">TOPIC ENGINE V3</p><h2>先形成完整事件全集，再按当日价值排序</h2></div>
+            <div><p className="eyebrow">TOPIC ENGINE V3</p><h2>先形成事件全集，再连接行情与根因</h2></div>
             <span className="engineVersion">{liveScan ? `实时扫描完成 · ${new Date(liveScan.scannedAt).toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}` : baiduConnected ? "百度 WebSearch 已接入 · 等待扫描" : "评分规则已配置 · 数据源待接入"}</span>
           </div>
           <div className="engineFlow">
             <span><b>01</b>覆盖矩阵<small>市场·政策·公司·产业·跨资产</small></span>
             <i>→</i><span><b>02</b>动态理解<small>实体·动作·对象·阶段</small></span>
-            <i>→</i><span><b>03</b>事件标准化<small>同一事件合并，不同动作拆开</small></span>
-            <i>→</i><span><b>04</b>完整诊断<small>过滤·去重·归属全可追踪</small></span>
-            <i>→</i><span><b>05</b>纯排序<small>评分不再删除事件</small></span>
+            <i>→</i><span><b>03</b>事件标准化<small>行情事实与原因事件分开</small></span>
+            <i>→</i><span><b>04</b>因果连接<small>时间·对象·机制·反证</small></span>
+            <i>→</i><span><b>05</b>分析排序<small>根因解释力优先</small></span>
           </div>
           <div className="ruleGrid">
             {topicEngineRules.map((item) => (

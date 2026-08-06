@@ -1,5 +1,11 @@
 import json
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+PROJECT_PACKAGES = Path(__file__).resolve().parents[1] / ".python_packages"
+if PROJECT_PACKAGES.is_dir():
+    sys.path.insert(0, str(PROJECT_PACKAGES))
 
 from poe_image import generate
 from poe_script import generate_script

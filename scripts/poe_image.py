@@ -2,8 +2,17 @@ import base64
 import json
 import re
 import sys
+from pathlib import Path
 
-import requests
+# The bundled Codex Python runtime can contain a certifi package whose CA file
+# has been removed during a runtime update. Prefer the project's vendored
+# dependencies before importing the HTTP client so TLS always uses a real CA bundle.
+PROJECT_PACKAGES = Path(__file__).resolve().parents[1] / ".python_packages"
+if PROJECT_PACKAGES.is_dir():
+    sys.path.insert(0, str(PROJECT_PACKAGES))
+
+import certifi
+import httpx
 
 
 POE_CHAT_COMPLETIONS_URL = "https://api.poe.com/v1/chat/completions"
@@ -53,7 +62,7 @@ def generate(request_data):
         return {"ok": False, "status": 400, "error": "缺少 Poe API Key、提示词或画幅参数。"}
 
     try:
-        response = requests.post(
+        response = httpx.post(
             POE_CHAT_COMPLETIONS_URL,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -66,17 +75,18 @@ def generate(request_data):
             },
             # 图片模型经常需要数分钟。连接阶段快速失败，生成读取阶段允许 6 分钟；
             # 读取超时后不自动重试，避免同一张图重复提交和重复计费。
-            timeout=(20, 360),
+            timeout=httpx.Timeout(360.0, connect=20.0),
+            verify=certifi.where(),
         )
-    except requests.exceptions.ReadTimeout:
+    except httpx.ReadTimeout:
         return {
             "ok": False,
             "status": 504,
             "error": "Poe 图片生成超过 6 分钟仍未返回。为避免重复扣费，本次没有自动重试；请稍后单独重新生成失败的画幅。",
         }
-    except requests.exceptions.ConnectTimeout:
+    except httpx.ConnectTimeout:
         return {"ok": False, "status": 504, "error": "连接 Poe 超时，请检查网络后重试。"}
-    except requests.RequestException as error:
+    except httpx.RequestError as error:
         return {"ok": False, "status": 502, "error": f"连接 Poe 失败：{error}"}
 
     request_id = response.headers.get("x-request-id") or response.headers.get("cf-ray") or ""
@@ -85,7 +95,7 @@ def generate(request_data):
     except ValueError:
         payload = None
 
-    if not response.ok:
+    if not response.is_success:
         if isinstance(payload, dict):
             error_value = payload.get("error")
             if isinstance(error_value, dict):

@@ -108,7 +108,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
               {scan.events.map((item: any) => {
                 const sourceUrl = sourceUrlFor(item);
                 return <div className="rejectionRow" key={item.eventKey || item.id}>
-                  <span title={item.trigger}>{sourceUrl ? <a className="eventSourceLink" href={sourceUrl} target="_blank" rel="noopener noreferrer"><b>{item.rank}. </b>{item.title}<i>↗</i></a> : <><b>{item.rank}. </b>{item.title}</>}</span><span>{item.category || "市场事件"}</span><span>{item.sourceCount}/{item.authorityCount}/{item.markets?.length || 0}</span><span>{Math.round(item.score)}</span><span className={item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}><b>{item.status}</b>{item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : ""}</span>
+                  <span title={item.trigger}>{sourceUrl ? <a className="eventSourceLink" href={sourceUrl} target="_blank" rel="noopener noreferrer"><b>{item.rank}. </b>{item.title}<i>↗</i></a> : <><b>{item.rank}. </b>{item.title}</>}</span><span>{item.eventRole || "事件"} · {item.category || "市场事件"}</span><span>{item.sourceCount}/{item.authorityCount}/{item.markets?.length || 0}</span><span>{Math.round(item.score)}</span><span className={item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}><b>{item.status}</b>{item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : ""}</span>
                 </div>;
               })}
             </div>
