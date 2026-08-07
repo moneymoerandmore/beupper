@@ -62,6 +62,14 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
     void collectPublication(publication);
   }
 
+  function deletePublication(link: any) {
+    const platform = link.snapshot?.platform || "未识别平台";
+    if (!window.confirm(`确定删除这条 ${platform} 投稿链接吗？\n\n该链接以及已经采集的历史数据都会被移除，稿件项目不会受影响。`)) return;
+    const current = JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]");
+    saveLinks(current.filter((item: any) => item.id !== link.id));
+    notify("投稿链接及其采集数据已删除");
+  }
+
   function continueProject() {
     if (!selected) return;
     window.localStorage.setItem("financial-titan-current-project", selected.id);
@@ -130,7 +138,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
             {selectedLinks.map((link) => <div className="assetPublication" key={link.id}>
               <div><b>{link.snapshot?.platform || "等待识别"}</b><a href={link.inputUrl} target="_blank" rel="noreferrer">{link.inputUrl}</a></div>
               <div className="assetMetrics">{[["播放","views"],["点赞","likes"],["评论","comments"],["转发","shares"],["收藏","favorites"]].map(([label,key]) => { const value = link.snapshot?.metrics?.[key]; return <span key={key}><small>{label}</small><b>{value == null ? "—" : Number(value).toLocaleString("zh-CN")}</b></span>; })}</div>
-              <div className="publicationActions"><span>{link.snapshot ? `最近采集 ${new Date(link.snapshot.collectedAt).toLocaleString("zh-CN")} · ${link.history?.length || 0} 次快照` : link.error || "等待首次采集"}</span><button className="ghost" disabled={link.status === "collecting"} onClick={() => collectPublication(link)}>{link.status === "collecting" ? "读取中…" : "刷新数据"}</button></div>
+              <div className="publicationActions"><span>{link.snapshot ? `最近采集 ${new Date(link.snapshot.collectedAt).toLocaleString("zh-CN")} · ${link.history?.length || 0} 次快照` : link.error || "等待首次采集"}</span><div><button className="ghost" disabled={link.status === "collecting"} onClick={() => collectPublication(link)}>{link.status === "collecting" ? "读取中…" : "刷新数据"}</button><button className="linkDeleteButton" onClick={() => deletePublication(link)}>删除链接</button></div></div>
             </div>)}
             {!selectedLinks.length && <div className="pendingCollect">尚未绑定投稿链接，可以在任何时间陆续补充多个平台。</div>}
           </article>

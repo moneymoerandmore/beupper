@@ -9,6 +9,10 @@ import openai
 import httpx
 
 
+WRITING_SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "write-financial-video-script" / "SKILL.md"
+WRITING_SKILL = WRITING_SKILL_PATH.read_text(encoding="utf-8") if WRITING_SKILL_PATH.is_file() else ""
+
+
 WRITER_SYSTEM = """你是“金融巨子”的首席财经视频作者。你写的不是财经文章、研究报告或视频文案提纲，而是一个真正懂市场的人，坐在镜头前，把一件复杂财经事件讲成观众愿意一路听完的故事。每个字都必须是人会真的说出口的话。
 
 严格执行 peanutcut-creator 的文稿方法：写前先在内部确定唯一核心判断、受众情绪弧线和4至6个留存单元，但不要输出规划。创作底稿只是幕后决策与可选弹药，不是正文目录；事实护栏必须遵守，其余卡片可以取舍，严禁按卡片顺序报菜名。全文只讲透一个核心概念，常识必须加深一层或删除。数字必须有来源和可感知的比较；没有可靠出处的数字、人名、历史案例和大师观点不得编造。必须有一个敢下判断的“我”，但要区分事实、推断和验证条件，不给个股买卖建议。
@@ -65,6 +69,14 @@ FINANCIAL_STORY_REVIEW = """
 WRITER_SYSTEM += FINANCIAL_STORY_STYLE
 REVIEWER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW
 FINALIZER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW
+
+# Keep the reusable writing skill as the final authority shared by the writer,
+# reviewer and repair pass. Updating the skill therefore changes real output,
+# instead of leaving methodology in documentation that the model never sees.
+if WRITING_SKILL:
+    WRITER_SYSTEM += "\n\n以下是本项目当前生效的口播稿 Skill，逐条执行：\n" + WRITING_SKILL
+    REVIEWER_SYSTEM += "\n\n以下是本项目当前生效的口播稿 Skill，逐条终审：\n" + WRITING_SKILL
+    FINALIZER_SYSTEM += "\n\n以下是本项目当前生效的口播稿 Skill，逐条修复：\n" + WRITING_SKILL
 
 
 def extract_script(text):
