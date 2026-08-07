@@ -226,7 +226,21 @@ function methodologyScriptForTopic(currentTopic: string, data?: any) {
 }
 
 const steps = ["选题确认", "研究底稿", "包装确认", "纯口播稿", "花生成片", "数据回流"];
-const methodologyVersion = 5;
+const methodologyVersion = 6;
+
+function coverDirectionForPackage(selected: any) {
+  const questionLed = selected.type === "好问题" || /\?|？/.test(selected.cover || "");
+  const riskLed = /恐惧|风险|警告|暴跌|跳水|出逃|冲击|禁令|制裁/.test(`${selected.motive || ""} ${selected.conflict || ""} ${selected.cover || ""}`);
+  const opportunityLed = /希望|机会|反弹|暴涨|抢筹|新高|修复/.test(`${selected.motive || ""} ${selected.conflict || ""} ${selected.cover || ""}`);
+  return {
+    archetype: questionLed ? "氛围纪录型、主体主导" : "财经周刊型、大字主导",
+    visualHierarchy: questionLed
+      ? "主视觉是唯一第一落点，主锤字是紧随其后的第二落点；二者不能同样大。"
+      : "主锤字本身就是唯一第一落点，主视觉退为一个清晰但次一级的证据符号。",
+    emotion: riskLed ? "危险正在逼近的压迫感" : opportunityLed ? "资金突然转向带来的兴奋与不安并存" : "旧共识被打破的紧迫和疑问",
+    signalColor: riskLed ? "警报红" : opportunityLed ? "克制金" : "冷白",
+  };
+}
 
 export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, startRequestId = 0, editProjectId = "" }: { notify: (message: string) => void; selectedTopic?: string; selectedTopicData?: any; startRequestId?: number; editProjectId?: string }) {
   const [projectId, setProjectId] = useState("");
@@ -249,6 +263,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [scriptProvenance, setScriptProvenance] = useState<any>(null);
   const [coverPrompt, setCoverPrompt] = useState("");
   const [coverImages, setCoverImages] = useState<{ landscape?: string; portrait?: string }>({});
+  const [coverMaterial, setCoverMaterial] = useState<any>(null);
   const [coverGenerating, setCoverGenerating] = useState(false);
   const [coverError, setCoverError] = useState("");
   const [videoLink, setVideoLink] = useState("");
@@ -292,6 +307,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setScript("");
       setScriptProvenance(null);
       setCoverImages({});
+      setCoverMaterial(null);
       setCoverPrompt("");
       setCoverError("");
       setArchived(false);
@@ -325,6 +341,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setArchived(Boolean(saved.archived));
       setCoverPrompt(saved.coverPrompt || "");
       setCoverImages(saved.coverImages || {});
+      setCoverMaterial(saved.coverMaterial || null);
       setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
       setDeepseekApiKey(window.localStorage.getItem("financial-titan-deepseek-key") || "");
       const savedModel = window.localStorage.getItem("financial-titan-poe-model");
@@ -339,7 +356,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   useEffect(() => {
     if (!hydrated || !projectId) return;
     window.localStorage.setItem("financial-titan-workflow", JSON.stringify({
-      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages,
+      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages, coverMaterial,
     }));
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
     const record = {
@@ -350,12 +367,12 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived,
       research: currentResearch,
       packaging: currentPackages[packageIndex],
-      coverPrompt, coverImages,
+      coverPrompt, coverImages, coverMaterial,
     };
     const index = projects.findIndex((item: any) => item.id === projectId);
     if (index >= 0) projects[index] = record; else projects.unshift(record);
     window.localStorage.setItem("financial-titan-projects", JSON.stringify(projects));
-  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages]);
+  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages, coverMaterial]);
 
   useEffect(() => {
     if (poeApiKey) window.localStorage.setItem("financial-titan-poe-key", poeApiKey);
@@ -369,20 +386,21 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   // peanutcut methodology：封面控制观众的 0.5 秒，基因层固定，变量层只换文案与视觉锤。
   useEffect(() => {
     const selected = currentPackages[packageIndex];
+    const direction = coverDirectionForPackage(selected);
     const sensitiveTopic = /台湾|香港|澳门|新疆|西藏/.test(topic);
     const subjectConstraint = sensitiveTopic
       ? "本题涉及敏感地域，画面禁止出现人物、旗帜和国徽，只能使用中性的金融概念场景。"
       : "没有经过确认的真实参考图，不要虚构具名人物的脸，也不要虚构观众能够核对真伪的具体实体。优先使用抽象金融意象或泛指主体。";
     setCoverPrompt(
-      `这是一张财经视频封面。观众会在信息流里用零点五秒决定要不要点开。不要追求信息完整，只控制三件事：第一眼认出这是一次重要的资本市场事件；立刻感到危险、紧迫或机会中的一种情绪；故意留下一个必须点开视频才能补上的信息缺口。\n\n` +
-      `本期视频标题是：“${selected.title}”。标题只供理解，绝对不要写进画面。封面与标题的分工是：${selected.coverMode}。封面必须给标题增加新的情绪或信息，不能复述标题，也不能换几个近义词再说一遍。\n\n` +
-      `这期最强的矛盾是：${selected.conflict}。把这个矛盾压缩成一个能在零点五秒认出来的视觉锤：${selected.visual}。画面只能有一个绝对主角，主体轮廓必须硬、清楚、完整，占画面约四成到五成半。只有在能明显强化冲突时，才允许加入一个对立元素；否则不要加。\n\n` +
-      `固定审美基因不要变：石墨黑或深海军蓝打底，克制的机构级财经编辑质感，电影级定向光，真实材质和清晰边缘；只允许一种情绪信号色，从警报红、克制金或冷白中选择。画面要像顶级商业杂志的封面，不要像廉价新闻海报，也不要像泛着塑料光的人工智能概念图。每期只更换主锤字和主视觉，其余设计语言保持系列一致。不要出现账号名、标志、角标或水印。\n\n` +
-      `图中唯一允许出现的中文大字，逐字准确写成：“${selected.cover}”。主锤字控制在四到八个汉字，使用超粗、紧凑、醒目的中文无衬线体，最多两行，只形成一个完整文字块。不能增加副标题、小字、英文装饰、股票代码或任何额外字符。每个汉字都必须完整、清晰、无错字，缩小到手机上约三厘米宽时仍能一眼读出。\n\n` +
-      `文字和主体必须彻底分开，不能互相遮挡。文字区域背后加一层不易察觉的暗色渐变蒙版，只为保证可读性，不能做成明显色块或卡片。底图要清晰、明亮但不过曝，细节不能抢字。\n\n` +
+      `为一条面向中文投资者的财经视频设计高点击封面。观众在信息流里只有零点五秒：先认出话题对象，再感到“${direction.emotion}”，最后被一个没有在标题里说完的信息缺口拉住。封面不是新闻摘要，也不是把所有市场元素摆上桌。\n\n` +
+      `本期标题是：“${selected.title}”。它只供你理解内容，绝对不能原样出现在画面。标题和封面是两块广告位，本期分工是“${selected.coverMode}”：标题负责交代问题和搜索对象，封面负责给出更锋利的情绪或判断。两者合起来必须比单看标题多一层信息，不能近义改写。\n\n` +
+      `先认领这张图的物种：${direction.archetype}。${direction.visualHierarchy}本期最强矛盾是“${selected.conflict}”，把它压成一个一眼能认出的视觉锤：“${selected.visual}”。主体轮廓要完整、硬朗、有真实材质，不能溶进背景。除非第二元素能直接构成矛盾，否则只保留一个主体。\n\n` +
+      `系列审美基因固定为“高压财经调查纪录片 × 国际商业周刊封面”：石墨黑到深海军蓝的低饱和底色，硬切的电影级定向光，真实纸张或金属的细微颗粒，锐利边缘，高明暗反差，紧凑的编辑排版。只使用一种信号色——${direction.signalColor}——并把它集中在视觉锤或关键文字上，不能全屏染色。质感必须权威但不冷淡，紧张但不廉价；避免塑料高光、泛滥霓虹、通用AI科技蓝和模板化新闻海报。每期只换主视觉与主锤字，构图逻辑、材质、字体气质和色彩纪律保持系列一致。不要出现账号名、Logo、角标或水印。\n\n` +
+      `画面只允许出现一个中文文字块，逐字写成：“${selected.cover}”。这是承诺，不是说明文字；使用超粗、紧凑、有压迫感的中文黑体，四到八个汉字优先，最多两行。不得自行增加副标题、英文、股票代码、数字标签或标点装饰。逐字正确、笔画完整，缩成手机信息流里的指甲盖大小仍能瞬间读出。文字和主体之间必须有明确负空间，不能覆盖面部、物件关键轮廓或高亮区域。\n\n` +
+      `情绪必须先由主视觉、光影和信号色成立，不能只靠读字。不要用“震惊脸”、廉价爆炸、金币雨或夸张符号替代真实冲突。底图只负责建立环境和纵深，细节一律退后；如果缩小后出现两个视觉中心，删除较弱的那个。\n\n` +
       `${subjectConstraint}\n` +
       `所有封面一律禁止地图、旗帜、国徽、虚假新闻截图、密集K线、坐标轴、图例、微小数字、多图拼贴、多人物、多标志、赛博界面、金币雨、牛熊雕像、外边框和平台界面。如果使用图表，只能用一个极简的方向形状传递情绪，不能承担具体数据展示。\n\n` +
-      `出图前在脑中把封面缩小到手机信息流里的指甲盖大小，做三项检查：主锤字是否能完整读出；唯一主体是否仍能辨认；危险、紧迫或机会的情绪是否立刻成立。任何一项不成立，就删掉次要元素、放大主体或增强对比，不能靠继续添加信息补救。`
+      `出图前把封面缩小到手机信息流里的指甲盖大小检查：话题能否认出，第一落点是否唯一，主锤字是否逐字完整，情绪是否在读字之前成立，标题与封面是否互补。任何一项不成立，只能删元素、放大第一落点、扩大负空间或增强局部对比，不能继续堆信息。`
     );
   }, [currentPackages, packageIndex, topic]);
 
@@ -466,13 +484,40 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     notify("纯口播稿已复制，可直接粘贴到花生AI");
   }
 
-  async function generateCover(format: "landscape" | "portrait") {
+  async function selectCoverMaterial() {
+    const baiduApiKey = window.localStorage.getItem("financial-titan-baidu-key") || "";
+    if (!baiduApiKey.trim()) throw new Error("请先在首页配置百度 WebSearch API Key，封面需要先搜索主题素材再做图生图。");
+    const selected = currentPackages[packageIndex];
+    const response = await fetch("/api/cover-material", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: baiduApiKey, topic, title: selected.title, visual: selected.visual }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "主题素材搜索失败");
+    const imageResponse = await fetch(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}`);
+    if (!imageResponse.ok) throw new Error("已选主题素材无法下载，未继续生成封面。");
+    const blob = await imageResponse.blob();
+    const referenceImage = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("主题素材读取失败"));
+      reader.readAsDataURL(blob);
+    });
+    const material = { ...payload.selected, query: payload.query, requestId: payload.requestId, selectedAt: new Date().toISOString() };
+    setCoverMaterial(material);
+    return { material, referenceImage };
+  }
+
+  async function generateCover(format: "landscape" | "portrait", referenceImage: string) {
     if (!poeApiKey.trim()) throw new Error("请先填写 Poe API Key。");
-    const isGptImage2 = poeModel.trim().toLowerCase() === "gpt-image-2";
-    const aspectRatio = format === "landscape" ? (isGptImage2 ? "3:2" : "16:9") : (isGptImage2 ? "2:3" : "9:16");
+    const aspectRatio = format === "landscape" ? "4:3" : "3:4";
     const layoutRules = format === "portrait"
-      ? `这是竖版封面，必须从零按纵向空间重新构图，不能裁切横版。大字放在中间偏上，主体放在中上或文字下方，形成从大字到主体的纵向视线瀑布。左右至少留出画面宽度百分之十四，顶部至少百分之十六，底部至少百分之二十二，避开平台字幕和操作区。文字块宽度不超过画面百分之六十八，高度不超过百分之二十二，任何笔画都不能越过安全区。`
-      : `这是横版封面，必须从零按横向空间重新构图，不能拉伸或裁切竖版。采用左图右字或右图左字，让主体与文字成为两个清楚的信息位。四周至少留出画面百分之九的安全边距，文字块宽度不超过画面百分之四十二，主体与文字不能重叠。`;
+      ? `这是竖版信息流封面，必须从零按纵向空间重新设计，绝不能把横版裁成竖版。用“上方建立钩子—中部形成唯一重心—下方留操作区”的纵向视线瀑布：主锤字位于上半部但不贴顶，主体位于中部并保持完整轮廓。左右各留至少百分之十四安全区，顶部留百分之十六，底部留百分之二十四，右侧额外避开平台按钮列。文字块宽度不超过百分之七十、高度不超过百分之二十二，最多两行；主体不得被底部字幕区截断。不要把横版的左右分栏硬挤成上下两块。`
+      : `这是横版中视频封面，必须从零按横向空间重新设计，绝不能拉伸或裁切竖版。采用不对称的三七构图：视觉锤占约六成，干净文字负空间占约四成；根据主体朝向选择左图右字或右图左字，让视线从主体自然落到主锤字。四周留至少百分之九安全边距，文字块宽度不超过百分之四十二，主体关键轮廓不能被边缘截断。不要居中对称摆放，也不要把主体和文字压成两个同等重量的方块。`;
+    const safeAreaRules = format === "portrait"
+      ? `3:4竖版建立不可越过的中央安全框：左边界为画布16%，右边界为78%，顶部边界为16%，底部边界为74%。主锤字的每个笔画、主体完整轮廓、脸部或核心识别特征必须全部落在安全框内。右侧22%和底部26%只能放可裁切的无关背景。文字块宽度不超过画面62%、高度不超过20%。`
+      : `4:3横版建立不可越过的中央安全框：左右、顶部和底部各留画布12%，全部文字、主体完整轮廓、脸部或核心识别特征必须位于中央76%宽、76%高的安全框内。安全框之外只能延展可裁切的无关背景、光影和纹理。文字块宽度不超过画面38%。`;
     const response = await fetch("http://127.0.0.1:4318/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -480,7 +525,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
         apiKey: poeApiKey,
         model: poeModel || "gpt-image-2",
         aspectRatio,
-        prompt: `${coverPrompt}\n\n本次画幅为 ${aspectRatio}。${layoutRules}\n出图前再次检查：完整文字块和每一个汉字都在安全区内，横版与竖版是同一套审美基因下的两次独立构图。`,
+        referenceImage,
+        prompt: `${coverPrompt}\n\n本次只生成${format === "portrait" ? "竖版" : "横版"}，目标画幅为 ${aspectRatio}。${layoutRules}\n${safeAreaRules}\n背景必须做满整个画布，但所有有意义的信息都必须收进安全框。禁止文字、头部、手部、产品边缘或主体关键部件贴边、出血、越界或被截断。即使平台从四边轻微裁切，主视觉和主锤字仍必须完整。`,
       }),
     });
     const payload = await response.json();
@@ -492,9 +538,10 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     setCoverGenerating(true);
     setCoverError("");
     try {
-      await generateCover("landscape");
-      await generateCover("portrait");
-      notify("GPT-Image-2 已生成横版与竖版封面");
+      const { material, referenceImage } = await selectCoverMaterial();
+      await generateCover("landscape", referenceImage);
+      await generateCover("portrait", referenceImage);
+      notify(`已自动选用“${material.title}”作为主题素材，并生成双画幅封面`);
     } catch (error) {
       setCoverError(error instanceof Error ? error.message : "封面生成失败");
     } finally {
@@ -605,7 +652,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           <h2>包装承诺必须和正文判断一致</h2>
           <div className="packageList">
             {currentPackages.map((item, index) => (
-              <button key={item.title} className={packageIndex === index ? "selected" : ""} onClick={() => { setPackageIndex(index); setPackageApproved(false); }}>
+              <button key={item.title} className={packageIndex === index ? "selected" : ""} onClick={() => { setPackageIndex(index); setPackageApproved(false); setCoverImages({}); setCoverMaterial(null); setCoverError(""); }}>
                 <i>{String(index + 1).padStart(2, "0")}</i>
                 <span><b>{item.title}</b><small>开头：{item.hook}</small><em>封面：{item.cover}</em></span>
               </button>
@@ -615,7 +662,6 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
             <div className="coverMock">
               <div className="coverChart"><i /><i /><i /><i /><i /></div>
               <strong>{currentPackages[packageIndex].cover}</strong>
-              <em>?!</em>
               <small>{currentPackages[packageIndex].visual}</small>
             </div>
             <div className="packageLogic">
@@ -626,6 +672,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
                 <div><dt>搜索锚点</dt><dd>{currentPackages[packageIndex].keyword}</dd></div>
                 <div><dt>最强矛盾</dt><dd>{currentPackages[packageIndex].conflict}</dd></div>
                 <div><dt>封面分工</dt><dd>{currentPackages[packageIndex].coverMode}</dd></div>
+                <div><dt>封面类型</dt><dd>{coverDirectionForPackage(currentPackages[packageIndex]).archetype}</dd></div>
+                <div><dt>情绪信号</dt><dd>{coverDirectionForPackage(currentPackages[packageIndex]).emotion} · {coverDirectionForPackage(currentPackages[packageIndex]).signalColor}</dd></div>
               </dl>
               <div className="packageScores">
                 {Object.entries(currentPackages[packageIndex].scores).map(([key, value]) => (
@@ -635,7 +683,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
                   </span>
                 ))}
               </div>
-              <p>缩略图检查：主锤字4—8字、唯一视觉焦点、黑紫科技底色。标题负责完整问题，封面不复读标题。</p>
+              <p>缩略图检查：话题、情绪和主锤字在0.5秒内成立；第一落点唯一；标题与封面互补。横竖版共享审美基因，但分别重新构图。</p>
             </div>
           </div>
           <div className="aiCoverStudio">
@@ -653,14 +701,15 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
             {coverError && <p className="coverError">{coverError}</p>}
             <div className="generatedCovers">
               <figure className="landscapeCover">
-                {coverImages.landscape ? <img src={coverImages.landscape} alt="GPT-Image-2 生成的横版封面" /> : <div><b>横版</b><span>适配 YouTube、Bilibili</span></div>}
-                <figcaption><span>横版封面</span>{coverImages.landscape && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.landscape!, "png", "金融巨子-横版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.landscape!, "jpg", "金融巨子-横版封面")}>JPG</button></span>}</figcaption>
+                {coverImages.landscape ? <img src={coverImages.landscape} alt="GPT-Image-2 生成的4:3横版封面" /> : <div><b>横版 4:3</b><span>适配 Bilibili 等横版封面</span></div>}
+                <figcaption><span>横版封面 · 4:3</span>{coverImages.landscape && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.landscape!, "png", "金融巨子-横版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.landscape!, "jpg", "金融巨子-横版封面")}>JPG</button></span>}</figcaption>
               </figure>
               <figure className="portraitCover">
-                {coverImages.portrait ? <img src={coverImages.portrait} alt="GPT-Image-2 生成的竖版封面" /> : <div><b>竖版</b><span>适配抖音、TikTok、Shorts</span></div>}
-                <figcaption><span>竖版封面</span>{coverImages.portrait && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.portrait!, "png", "金融巨子-竖版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.portrait!, "jpg", "金融巨子-竖版封面")}>JPG</button></span>}</figcaption>
+                {coverImages.portrait ? <img src={coverImages.portrait} alt="GPT-Image-2 生成的3:4竖版封面" /> : <div><b>竖版 3:4</b><span>适配抖音、小红书等竖版封面</span></div>}
+                <figcaption><span>竖版封面 · 3:4</span>{coverImages.portrait && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.portrait!, "png", "金融巨子-竖版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.portrait!, "jpg", "金融巨子-竖版封面")}>JPG</button></span>}</figcaption>
               </figure>
             </div>
+            {(coverImages.landscape || coverImages.portrait) && <p className="coverQaNotice">出图复核：主视觉完整轮廓与全部文字必须在中央安全框内。4:3 四边各留至少12%；3:4 左侧16%、右侧22%、顶部16%、底部26%只放可裁背景。任何主体或文字贴边、越界、截断，都单独重新生成该画幅。</p>}
             <p className="keyNotice">API Key 只保存在这台设备的浏览器中；点击生成时发送给本地接口，再由本地接口调用 Poe。</p>
           </div>
           <div className="studioActions"><button className="primary" onClick={approvePackage}>{packageApproved ? "已确认，进入成稿 →" : "确认这套包装 →"}</button></div>

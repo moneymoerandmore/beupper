@@ -57,11 +57,18 @@ def generate(request_data):
     model = str(request_data.get("model", "gpt-image-2")).strip() or "gpt-image-2"
     prompt = str(request_data.get("prompt", "")).strip()
     aspect_ratio = str(request_data.get("aspectRatio", "")).strip()
+    reference_image = str(request_data.get("referenceImage", "")).strip()
 
     if not api_key or not prompt or not aspect_ratio:
         return {"ok": False, "status": 400, "error": "缺少 Poe API Key、提示词或画幅参数。"}
 
     try:
+        message_content = prompt
+        if reference_image:
+            message_content = [
+                {"type": "text", "text": prompt + "\n\nUse the attached source image as the factual main visual. Preserve the recognizable subject and its defining features, but rebuild lighting, background, composition and typography as instructed. Do not merely place a filter over the source."},
+                {"type": "image_url", "image_url": {"url": reference_image}},
+            ]
         response = httpx.post(
             POE_CHAT_COMPLETIONS_URL,
             headers={
@@ -70,7 +77,7 @@ def generate(request_data):
             },
             json={
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": message_content}],
                 "stream": False,
             },
             # 图片模型经常需要数分钟。连接阶段快速失败，生成读取阶段允许 6 分钟；

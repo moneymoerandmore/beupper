@@ -1,0 +1,4 @@
+interface:
+  display_name: "财经双画幅封面"
+  short_description: "自动搜索主题素材并生成高点击率横竖双画幅财经视频封面"
+  default_prompt: "使用 $design-financial-video-cover 根据当前财经选题自动选材并生成横版和竖版封面。"
