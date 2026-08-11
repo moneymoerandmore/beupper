@@ -13,11 +13,25 @@ function researchForTopic(currentTopic: string, context: any = {}) {
   const evidenceNames = evidence.slice(0, 5).map((item: any) => `${item.site || "来源待识别"}《${item.title || "标题缺失"}》`).join("；");
   const thesis = context?.thesis || `表面新闻已经出现，但真正值得讲的是它改变了哪条定价逻辑，以及这种改变能否继续传导。`;
   const trigger = context?.trigger || "事件触发点仍需从原始信源中确认";
-  const isFx = /日元|汇率|外汇|干预|美元.?日元|yen/.test(text);
+  const isRmb = /人民币|离岸人民币|在岸人民币|美元.?人民币|usd.?cny|usd.?cnh|中间价/.test(text);
+  const isYen = /日元|美元.?日元|美日|usd.?jpy|yen/.test(text);
+  const isFx = isRmb || isYen || /汇率|外汇|干预|美元指数|欧元|英镑|韩元/.test(text);
   const isTech = /半导体|芯片|科技|人工智能|\bai\b/.test(text);
   const isPolicy = /央行|利率|降息|加息|政策|关税|监管/.test(text);
-  const coreConcept = isFx ? "政策信号如何穿透套息交易，进而改变全球资金成本" : isTech ? "这轮上涨究竟是盈利兑现、估值修复，还是仓位回补" : isPolicy ? "政策变化通过哪一个价格变量进入股市，而不是政策口号本身" : "第一反应和真实传导之间的落差";
-  const imageAnchor = isFx ? "一部突然倒转的扶梯：借低息货币买高收益资产的人开始逆向奔跑" : isTech ? "一张开始结账的餐桌：市场不再为菜单买单，只为已经端上来的利润买单" : "一排相连的水箱：新闻只倒进第一个水箱，资金成本决定水能不能流到后面";
+  const coreConcept = isRmb
+    ? "人民币变化如何同时影响跨境资金、进口成本、出口利润和A股估值"
+    : isYen
+      ? "日元变化如何穿透套息仓位并改变全球资金成本"
+      : isFx
+        ? "汇率变化通过资金成本与企业盈利进入股票定价的条件"
+        : isTech ? "这轮上涨究竟是盈利兑现、估值修复，还是仓位回补" : isPolicy ? "政策变化通过哪一个价格变量进入股市，而不是政策口号本身" : "第一反应和真实传导之间的落差";
+  const imageAnchor = isRmb
+    ? "一架两端受力的天平：一边是外资与进口成本，另一边是出口收入，人民币变化让两边同时重新定价"
+    : isYen
+      ? "一部突然倒转的扶梯：借低息日元买高收益资产的人开始逆向回撤"
+      : isFx
+        ? "一组相连的齿轮：汇率先动，资金成本和企业利润随后以不同速度转动"
+        : isTech ? "一张开始结账的餐桌：市场不再为菜单买单，只为已经端上来的利润买单" : "一排相连的水箱：新闻只倒进第一个水箱，资金成本决定水能不能流到后面";
   const retentionUnits = [
     `单元一｜用“${trigger}”里的最强事实打开，不交代完整背景；收尾把问题转向“市场到底在重新定价什么”。`,
     `单元二｜拆掉观众最容易相信的表面解释，讲透唯一概念“${coreConcept}”；只保留一条主因果链。`,
@@ -88,12 +102,19 @@ const packages = [
   },
 ];
 
-function packagesForTopic(currentTopic: string) {
+function packagesForTopic(currentTopic: string, context: any = {}) {
   const clean = currentTopic.trim() || defaultTopic;
   const text = clean.toLowerCase();
+  const isRmb = /人民币|离岸人民币|在岸人民币|美元.?人民币|usd.?cny|usd.?cnh|中间价/.test(text);
+  const isYen = /日元|美元.?日元|美日|usd.?jpy|yen/.test(text);
   const isFx = /日元|美元.?日元|美日|汇率|外汇|干预|intervention|yen/.test(text);
-  const coverCopies = isFx
-    ? ["美日突然出手", "日元要变天？", "全球资金变向？"]
+  const isCurrency = isFx || isRmb || /人民币|美元指数|欧元|英镑|韩元|汇率|外汇/.test(text);
+  const coverCopies = isRmb
+    ? ["人民币突然走强", "外资要回流？", "A股谁先重估？"]
+    : isYen
+      ? ["日元突然走强", "套息交易松动？", "全球资金变向？"]
+      : isCurrency
+        ? ["汇率突然变盘", "资金要转向？", "谁会先重估？"]
     : /降息|加息|央行|美联储|利率|货币政策/.test(text)
       ? ["央行突然变脸", "降息交易反转？", "全球资产变盘"]
       : /半导体|芯片|科技|人工智能|\bai\b/.test(text)
@@ -107,30 +128,48 @@ function packagesForTopic(currentTopic: string) {
               : /黄金|原油|铜|商品/.test(text)
                 ? ["商品突然异动", "通胀要失控？", "资金正在避险"]
                 : ["大资金突然转向", "市场严重误判？", "真正冲击来了"];
-  const titles = isFx
-    ? [
-      "美日突然摸向汇率扳机，日元反弹还是全球资金撤退？",
-      "别只盯日元，美日若真出手，最先松动的是全球套息交易",
-      "日元要变天？先看美债、日股和A股这三个确认信号",
-    ]
+  const titles = isRmb
+    ? [clean, "人民币升值背后，A股真正交易的是资金回流还是盈利重估？", "人民币这轮升值能走多远？盯住美元、外资和出口链三个确认"]
+    : isYen
+      ? [clean, "日元走强背后，全球市场真正担心的是汇率还是套息仓位？", "日元这轮异动能走多远？盯住美债、日股和风险资产三个确认"]
+      : isCurrency
+        ? [clean, `${clean}，股票市场真正交易的是哪条资金与盈利链？`, `${clean}能走多远？先看三个跨市场确认信号`]
     : [
       clean,
       `${clean}，市场最可能看错的不是方向，而是传导顺序`,
       `${clean}到底能走多远？先看三个确认信号`,
     ];
-  const hooks = isFx
+  const hooks = isRmb
     ? [
-      "美日如果真的对日元出手，最危险的可能不是做空日元的人，而是全球最拥挤的那笔便宜钱。",
-      "很多人把这当成一条外汇新闻，但它真正可能撬动的，是从美债到日股、再到A股科技估值的一整条资金链。",
-      "日元涨一天不叫变天。真正的信号，是汇率动完以后，美债、日股和亚洲风险资产有没有被迫跟着动。",
+      "人民币突然走强，最先被重估的可能不是汇率本身，而是外资成本、进口利润和出口公司的业绩预期。",
+      "同样是人民币升值，对航空、造纸和出口链的影响可能完全相反，A股不会只给出一个统一答案。",
+      "人民币涨一天不等于趋势反转。真正的确认，要看美元、跨境资金和出口链盈利预期能不能同时接上。",
     ]
+    : isYen
+      ? [
+        "日元突然走强，市场真正需要重算的不是一个汇率点位，而是借低息日元建立的全球仓位。",
+        "一条日元行情为什么会传到美债、日股和高估值资产？关键在资金成本，而不是新闻标题。",
+        "日元涨一天不叫变天，真正的确认是债券、日股和全球风险资产有没有按顺序跟随。",
+      ]
+      : isCurrency
+        ? [
+          `${clean}。汇率只是第一块屏幕，股票最终交易的是资金成本、企业盈利和风险偏好的变化。`,
+          "汇率和股市同时变化不等于因果成立，先要找出谁先动、通过什么变量传导。",
+          "一天异动不叫趋势，真正的确认要来自美元、债券、跨境资金和相关股票的连续反应。",
+        ]
     : [
       `${clean}。表面上大家在争涨跌，真正决定后面行情的却是资金先从哪里撤、又往哪里去。`,
       `这条热点最容易看错的地方，是把同时发生当成因果。市场真正交易的顺序，可能正好相反。`,
       `别急着追第一根大阳线，也别被第一根大阴线吓跑。${clean}要成立，还缺三个确认信号。`,
     ];
-  const conflict = isFx ? "官方出手预期 × 全球套息交易" : "第一反应 × 真实传导";
-  const visual = isFx ? "一枚被骤然扳动的汇率杠杆，美元与日元两端失衡，资金流像绷紧的钢索" : "一条突然改变方向的资本洪流，与仍按旧方向前进的市场形成正面冲突";
+  const conflict = isRmb ? "人民币升值 × A股行业分化" : isYen ? "日元走强 × 全球套息仓位" : isCurrency ? "汇率异动 × 资金与盈利重估" : "第一反应 × 真实传导";
+  const visual = isRmb
+    ? "一枚人民币汇率刻度向上抬升，外资流向与出口利润在两侧形成方向相反的拉力"
+    : isYen
+      ? "一枚日元汇率杠杆突然反向，低息资金链像绷紧的钢索开始回收"
+      : isCurrency
+        ? "一个汇率刻度突然改变方向，资金流与企业利润在两侧重新寻找平衡"
+        : "一条突然改变方向的资本洪流，与仍按旧方向前进的市场形成正面冲突";
   return packages.map((item, index) => ({
     ...item,
     title: titles[index],
@@ -218,7 +257,6 @@ function scriptForTopic(currentTopic: string, data?: any) {
 function methodologyScriptForTopic(currentTopic: string, data?: any) {
   const clean = currentTopic.trim() || defaultTopic;
   const category = data?.category || "全球资本市场事件";
-  if (/日元|汇率|外汇|干预|美元.?日元|yen|intervention/i.test(`${clean} ${category}`)) return scriptForTopic(clean, data);
   const markets = Array.isArray(data?.markets) && data.markets.length ? data.markets.join("、") : "美股、港股、A股、债券和外汇";
   const trigger = "这次事件已经从消息层面进入资产价格讨论，但传导是否持续仍需市场确认";
   const sourceSummary = "";
@@ -226,7 +264,7 @@ function methodologyScriptForTopic(currentTopic: string, data?: any) {
 }
 
 const steps = ["选题确认", "研究底稿", "包装确认", "纯口播稿", "花生成片", "数据回流"];
-const methodologyVersion = 6;
+const methodologyVersion = 7;
 
 function coverDirectionForPackage(selected: any) {
   const questionLed = selected.type === "好问题" || /\?|？/.test(selected.cover || "");
@@ -261,6 +299,10 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [scriptWaitSeconds, setScriptWaitSeconds] = useState(0);
   const [scriptError, setScriptError] = useState("");
   const [scriptProvenance, setScriptProvenance] = useState<any>(null);
+  const [packagingOptions, setPackagingOptions] = useState<any[]>([]);
+  const [packagingGenerating, setPackagingGenerating] = useState(false);
+  const [packagingError, setPackagingError] = useState("");
+  const [packagingProvenance, setPackagingProvenance] = useState<any>(null);
   const [coverPrompt, setCoverPrompt] = useState("");
   const [coverImages, setCoverImages] = useState<{ landscape?: string; portrait?: string }>({});
   const [coverMaterial, setCoverMaterial] = useState<any>(null);
@@ -271,7 +313,11 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [metricLoading, setMetricLoading] = useState(false);
   const [metricError, setMetricError] = useState("");
   const currentResearch = useMemo(() => researchForTopic(topic, topicContext), [topic, topicContext]);
-  const currentPackages = useMemo(() => packagesForTopic(topic), [topic]);
+  const currentPackages = packagingOptions;
+  const selectedPackage = currentPackages[packageIndex] || {
+    title: topic, hook: "", cover: "", type: "", motive: "", keyword: topic.slice(0, 28),
+    conflict: "", coverMode: "", visual: "", visualSubjectType: "non_human", namedPerson: "", scores: { ctr: 0, search: 0, promise: 0, oral: 0 },
+  };
   const contextEvidenceCount = Array.isArray(topicContext?.evidence) ? topicContext.evidence.length : 0;
 
   useEffect(() => {
@@ -303,6 +349,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setTopicContext(selectedTopicData ? JSON.parse(JSON.stringify(selectedTopicData)) : { title: nextTopic });
       setTopicApproved(false);
       setPackageIndex(0);
+      setPackagingOptions([]);
+      setPackagingError("");
+      setPackagingProvenance(null);
       setPackageApproved(false);
       setScript("");
       setScriptProvenance(null);
@@ -328,6 +377,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
     const project = projects.find((item: any) => item.id === currentId);
     const raw = project ? JSON.stringify(project) : window.localStorage.getItem("financial-titan-workflow");
+    setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
+    setDeepseekApiKey(window.localStorage.getItem("financial-titan-deepseek-key") || "");
     if (!raw) { setHydrated(true); return; }
     try {
       const saved = JSON.parse(raw);
@@ -336,14 +387,14 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setTopicContext(saved.topicContext || { title: saved.topic ?? defaultTopic, note: "历史项目未保存原始扫描上下文" });
       setTopicApproved(Boolean(saved.topicApproved));
       setPackageIndex(saved.packageIndex ?? 0);
+      setPackagingOptions(Array.isArray(saved.packagingOptions) ? saved.packagingOptions : (saved.packaging ? [saved.packaging] : []));
+      setPackagingProvenance(saved.packagingProvenance || null);
       setPackageApproved(Boolean(saved.packageApproved));
       setScript(saved.script ?? "");
       setArchived(Boolean(saved.archived));
       setCoverPrompt(saved.coverPrompt || "");
       setCoverImages(saved.coverImages || {});
       setCoverMaterial(saved.coverMaterial || null);
-      setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
-      setDeepseekApiKey(window.localStorage.getItem("financial-titan-deepseek-key") || "");
       const savedModel = window.localStorage.getItem("financial-titan-poe-model");
       setPoeModel(!savedModel || ["image2", "nano-banana-2", "gpt-image-2"].includes(savedModel.toLowerCase()) ? "gpt-image-2" : savedModel);
       const savedScriptModel = window.localStorage.getItem("financial-titan-script-model") || "";
@@ -356,7 +407,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   useEffect(() => {
     if (!hydrated || !projectId) return;
     window.localStorage.setItem("financial-titan-workflow", JSON.stringify({
-      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages, coverMaterial,
+      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial,
     }));
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
     const record = {
@@ -364,7 +415,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       createdAt: projects.find((item: any) => item.id === projectId)?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       methodologyVersion,
-      step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived,
+      step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived,
       research: currentResearch,
       packaging: currentPackages[packageIndex],
       coverPrompt, coverImages, coverMaterial,
@@ -372,7 +423,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const index = projects.findIndex((item: any) => item.id === projectId);
     if (index >= 0) projects[index] = record; else projects.unshift(record);
     window.localStorage.setItem("financial-titan-projects", JSON.stringify(projects));
-  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, script, archived, coverPrompt, coverImages, coverMaterial]);
+  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial]);
 
   useEffect(() => {
     if (poeApiKey) window.localStorage.setItem("financial-titan-poe-key", poeApiKey);
@@ -386,11 +437,15 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   // peanutcut methodology：封面控制观众的 0.5 秒，基因层固定，变量层只换文案与视觉锤。
   useEffect(() => {
     const selected = currentPackages[packageIndex];
+    if (!selected) { setCoverPrompt(""); return; }
     const direction = coverDirectionForPackage(selected);
+    const allowNamedPerson = selected.visualSubjectType === "named_real_person" && Boolean(selected.namedPerson?.trim());
     const sensitiveTopic = /台湾|香港|澳门|新疆|西藏/.test(topic);
     const subjectConstraint = sensitiveTopic
       ? "本题涉及敏感地域，画面禁止出现人物、旗帜和国徽，只能使用中性的金融概念场景。"
-      : "没有经过确认的真实参考图，不要虚构具名人物的脸，也不要虚构观众能够核对真伪的具体实体。优先使用抽象金融意象或泛指主体。";
+      : allowNamedPerson
+        ? `本题核心事实明确指向具名真实人物“${selected.namedPerson}”。只允许出现这一位人物，并且必须以经过验证的真实参考图为身份依据；保留可识别面部特征，禁止虚构另一张脸、替身、随从、群众或第二个人。`
+        : "本题不是人物主题。画面绝对禁止出现任何人类、脸、五官、头部、身体、手、人物剪影、背影、群众、人偶、雕塑人像、微缩小人、假人模特和任何类人轮廓。即使参考素材里带有人物，也必须完全删除人物，只保留与事件相关的非人物实体、环境、材质或价格张力。不得用一个没有身份的AI假人充当财经主题。";
     setCoverPrompt(
       `为一条面向中文投资者的财经视频设计高点击封面。观众在信息流里只有零点五秒：先认出话题对象，再感到“${direction.emotion}”，最后被一个没有在标题里说完的信息缺口拉住。封面不是新闻摘要，也不是把所有市场元素摆上桌。\n\n` +
       `本期标题是：“${selected.title}”。它只供你理解内容，绝对不能原样出现在画面。标题和封面是两块广告位，本期分工是“${selected.coverMode}”：标题负责交代问题和搜索对象，封面负责给出更锋利的情绪或判断。两者合起来必须比单看标题多一层信息，不能近义改写。\n\n` +
@@ -399,7 +454,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       `画面只允许出现一个中文文字块，逐字写成：“${selected.cover}”。这是承诺，不是说明文字；使用超粗、紧凑、有压迫感的中文黑体，四到八个汉字优先，最多两行。不得自行增加副标题、英文、股票代码、数字标签或标点装饰。逐字正确、笔画完整，缩成手机信息流里的指甲盖大小仍能瞬间读出。文字和主体之间必须有明确负空间，不能覆盖面部、物件关键轮廓或高亮区域。\n\n` +
       `情绪必须先由主视觉、光影和信号色成立，不能只靠读字。不要用“震惊脸”、廉价爆炸、金币雨或夸张符号替代真实冲突。底图只负责建立环境和纵深，细节一律退后；如果缩小后出现两个视觉中心，删除较弱的那个。\n\n` +
       `${subjectConstraint}\n` +
-      `所有封面一律禁止地图、旗帜、国徽、虚假新闻截图、密集K线、坐标轴、图例、微小数字、多图拼贴、多人物、多标志、赛博界面、金币雨、牛熊雕像、外边框和平台界面。如果使用图表，只能用一个极简的方向形状传递情绪，不能承担具体数据展示。\n\n` +
+      `所有封面一律禁止地图、旗帜、国徽、虚假新闻截图、密集K线、坐标轴、图例、微小数字、多图拼贴、多标志、赛博界面、金币雨、牛熊雕像、外边框和平台界面。除非上文明确批准唯一具名真实人物，否则同时禁止任何人形元素。如果使用图表，只能用一个极简的方向形状传递情绪，不能承担具体数据展示。\n\n` +
       `出图前把封面缩小到手机信息流里的指甲盖大小检查：话题能否认出，第一落点是否唯一，主锤字是否逐字完整，情绪是否在读字之前成立，标题与封面是否互补。任何一项不成立，只能删元素、放大第一落点、扩大负空间或增强局部对比，不能继续堆信息。`
     );
   }, [currentPackages, packageIndex, topic]);
@@ -411,7 +466,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     { label: "创作底稿只在幕后，不按卡片报菜名", ok: !/事实底座|核心概念层|情绪弧线|留存单元|信息增量层|终审护栏/.test(script) },
     { label: "使用中文标点", ok: !/[A-Za-z\u4e00-\u9fa5][,.!?][\u4e00-\u9fa5]/.test(script) },
     { label: "给出边界或验证条件", ok: /如果|除非|一旦|验证|确认|观察/.test(script) },
-    { label: "开头含可搜索主体", ok: script.slice(0, 160).includes(currentPackages[packageIndex].keyword) || script.slice(0, 160).includes(topic.slice(0, 6)) },
+    { label: "开头含可搜索主体", ok: script.slice(0, 160).includes(selectedPackage.keyword) || script.slice(0, 160).includes(topic.slice(0, 6)) },
     { label: "避免AI腔排比否定", ok: !/不是[^。]{0,25}不是[^。]{0,25}而是/.test(script) },
     { label: "段落形成自然留存节奏", ok: script.split(/\n\s*\n/).filter(Boolean).length >= 6 },
     { label: "避免连续套路式设问", ok: (script.match(/？/g) || []).length <= 3 },
@@ -422,6 +477,52 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     setTopicApproved(true);
     setStep(1);
     notify("选题已通过 Gate 1，研究底稿可以继续");
+  }
+
+  async function generatePackaging() {
+    if (!deepseekApiKey.trim()) {
+      setPackagingError("请先填写页面绑定的 DeepSeek API Key，再生成标题、Hook 和封面包装。");
+      return;
+    }
+    setPackagingGenerating(true);
+    setPackagingError("");
+    setPackagingProvenance(null);
+    try {
+      const response = await fetch("http://127.0.0.1:4318/generate-packaging", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey: deepseekApiKey,
+          model: scriptModel || "deepseek-v4-pro",
+          topic,
+          topicContext,
+          research: currentResearch,
+        }),
+        signal: AbortSignal.timeout(600_000),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "DeepSeek 包装生成失败");
+      const receipts = payload?.provenance?.receipts;
+      if (!Array.isArray(receipts) || !receipts.length || !receipts.every((item: any) => item?.responseId)) {
+        throw new Error("DeepSeek 未返回可核验的模型回执，本次包装结果已拒绝写入。");
+      }
+      if (!Array.isArray(payload.packages) || payload.packages.length !== 3) {
+        throw new Error("DeepSeek 没有返回完整的三套包装方案，请重新生成。");
+      }
+      setPackagingOptions(payload.packages);
+      setPackagingProvenance(payload.provenance);
+      setPackageIndex(0);
+      setPackageApproved(false);
+      setCoverImages({});
+      setCoverMaterial(null);
+      setCoverError("");
+      setStep(2);
+      notify("DeepSeek 已基于当前选题与研究底稿生成三套包装方案");
+    } catch (error: any) {
+      setPackagingError(error?.message || "DeepSeek 包装生成失败");
+    } finally {
+      setPackagingGenerating(false);
+    }
   }
 
   async function approvePackage() {
@@ -449,7 +550,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           topic,
           topicContext,
           research: currentResearch,
-          packaging: currentPackages[packageIndex],
+          packaging: selectedPackage,
           packagingOptions: currentPackages,
           workflowContext: {
             topicApproved,
@@ -491,7 +592,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const response = await fetch("/api/cover-material", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey: baiduApiKey, topic, title: selected.title, visual: selected.visual }),
+      body: JSON.stringify({ apiKey: baiduApiKey, topic, title: selected.title, visual: selected.visual, allowPerson: selected.visualSubjectType === "named_real_person" && Boolean(selected.namedPerson?.trim()), namedPerson: selected.namedPerson || "" }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "主题素材搜索失败");
@@ -513,10 +614,10 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     if (!poeApiKey.trim()) throw new Error("请先填写 Poe API Key。");
     const aspectRatio = format === "landscape" ? "4:3" : "3:4";
     const layoutRules = format === "portrait"
-      ? `这是竖版信息流封面，必须从零按纵向空间重新设计，绝不能把横版裁成竖版。用“上方建立钩子—中部形成唯一重心—下方留操作区”的纵向视线瀑布：主锤字位于上半部但不贴顶，主体位于中部并保持完整轮廓。左右各留至少百分之十四安全区，顶部留百分之十六，底部留百分之二十四，右侧额外避开平台按钮列。文字块宽度不超过百分之七十、高度不超过百分之二十二，最多两行；主体不得被底部字幕区截断。不要把横版的左右分栏硬挤成上下两块。`
+      ? `这是3:4竖版信息流封面，必须从零按纵向空间重新设计，绝不能把横版裁成竖版。纵向视线顺序为“安全区内的主锤字—中部唯一主视觉—底部纯背景缓冲区”。主锤字禁止放在画面顶端：文字框上沿必须从画布高度22%以下开始，文字框整体只能位于高度22%至44%的带状区域；画布顶部0%至20%必须保持为没有文字、数字、标点和主体关键轮廓的纯背景缓冲带。主体位于中部并保持完整轮廓。文字最多两行，每行在水平和垂直方向都完整居中；短句优先一行，放不下时均衡拆成两行并主动缩小字号，绝不允许任何一个汉字贴边或被裁。不要把横版的左右分栏硬挤成上下两块。`
       : `这是横版中视频封面，必须从零按横向空间重新设计，绝不能拉伸或裁切竖版。采用不对称的三七构图：视觉锤占约六成，干净文字负空间占约四成；根据主体朝向选择左图右字或右图左字，让视线从主体自然落到主锤字。四周留至少百分之九安全边距，文字块宽度不超过百分之四十二，主体关键轮廓不能被边缘截断。不要居中对称摆放，也不要把主体和文字压成两个同等重量的方块。`;
     const safeAreaRules = format === "portrait"
-      ? `3:4竖版建立不可越过的中央安全框：左边界为画布16%，右边界为78%，顶部边界为16%，底部边界为74%。主锤字的每个笔画、主体完整轮廓、脸部或核心识别特征必须全部落在安全框内。右侧22%和底部26%只能放可裁切的无关背景。文字块宽度不超过画面62%、高度不超过20%。`
+      ? `3:4竖版建立两层不可越过的安全框。全局主体安全框：左边界16%，右边界78%，顶部16%，底部74%。更严格的文字安全框：左边界18%，右边界76%，顶部22%，底部44%。主锤字的字框、阴影、描边、辉光以及每一个笔画都必须完整落在文字安全框内，文字上方至少保留相当于一个汉字高度的空白。右侧22%、顶部20%和底部26%只能放可裁切的无关背景。文字块宽度不超过画面58%、高度不超过18%；如果字号与安全框冲突，必须缩小字号和行距，不得移动文字框越界。`
       : `4:3横版建立不可越过的中央安全框：左右、顶部和底部各留画布12%，全部文字、主体完整轮廓、脸部或核心识别特征必须位于中央76%宽、76%高的安全框内。安全框之外只能延展可裁切的无关背景、光影和纹理。文字块宽度不超过画面38%。`;
     const response = await fetch("http://127.0.0.1:4318/generate", {
       method: "POST",
@@ -526,7 +627,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
         model: poeModel || "gpt-image-2",
         aspectRatio,
         referenceImage,
-        prompt: `${coverPrompt}\n\n本次只生成${format === "portrait" ? "竖版" : "横版"}，目标画幅为 ${aspectRatio}。${layoutRules}\n${safeAreaRules}\n背景必须做满整个画布，但所有有意义的信息都必须收进安全框。禁止文字、头部、手部、产品边缘或主体关键部件贴边、出血、越界或被截断。即使平台从四边轻微裁切，主视觉和主锤字仍必须完整。`,
+        allowPerson: selectedPackage.visualSubjectType === "named_real_person" && Boolean(selectedPackage.namedPerson?.trim()),
+        namedPerson: selectedPackage.namedPerson || "",
+        prompt: `${coverPrompt}\n\n本次只生成${format === "portrait" ? "竖版" : "横版"}，目标画幅为 ${aspectRatio}。${layoutRules}\n${safeAreaRules}\n背景必须做满整个画布，但所有有意义的信息都必须收进安全框。禁止文字、头部、手部、产品边缘或主体关键部件贴边、出血、越界或被截断。即使平台从四边轻微裁切，主视觉和主锤字仍必须完整。${format === "portrait" ? "最终出图前必须做文字边界复核：从画布顶部向下20%的区域内不得出现任何文字像素；若主锤字、描边或阴影触碰该区域，重新排版并缩小字号，不能输出越界版本。此条优先级高于前文任何关于文字位置的描述。" : ""}`,
       }),
     });
     const payload = await response.json();
@@ -592,7 +695,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       createdAt: existing.find((item: any) => item.id === projectId)?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       topic,
-      ...currentPackages[packageIndex],
+      ...selectedPackage,
       script,
       research: currentResearch,
       coverPrompt,
@@ -611,7 +714,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     <div className="studio">
       <section className="studioStepper">
         {steps.map((label, index) => (
-          <button key={label} className={`${index === step ? "current" : ""} ${index < step ? "passed" : ""}`} onClick={() => setStep(index)}>
+          <button key={label} className={`${index === step ? "current" : ""} ${index < step ? "passed" : ""}`} onClick={() => { if (index === 2 && !currentPackages.length) { void generatePackaging(); return; } setStep(index); }}>
             <i>{index < step ? "✓" : index + 1}</i><span>{label}</span>
           </button>
         ))}
@@ -635,7 +738,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
 
       {step === 1 && (
         <section className="studioPanel">
-          <div className="studioTitle"><div><p className="eyebrow">PEANUTCUT CREATIVE BRIEF</p><h2>动态创作底稿</h2></div><button className="primary" onClick={() => setStep(2)}>底稿确认，进入包装 →</button></div>
+          <div className="studioTitle"><div><p className="eyebrow">PEANUTCUT CREATIVE BRIEF</p><h2>动态创作底稿</h2></div><button className="primary" disabled={packagingGenerating || !deepseekApiKey.trim()} onClick={generatePackaging}>{packagingGenerating ? "DeepSeek 正在生成包装…" : "底稿确认，用大模型生成包装 →"}</button></div>
+          <div className="poeConfig"><label>DeepSeek API Key<input type="password" value={deepseekApiKey} onChange={(event) => setDeepseekApiKey(event.target.value)} placeholder="仅保存在当前浏览器" autoComplete="off" /></label><label>包装模型<select value={scriptModel} onChange={(event) => setScriptModel(event.target.value)}><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="deepseek-v4-flash">DeepSeek V4 Flash</option></select></label></div>
+          {packagingError && <p className="coverError">{packagingError}</p>}
           <div className="researchGrid">
             {currentResearch.map((layer) => (
               <article key={layer.key}><div><b>{layer.key}</b><em>{layer.status}</em></div><h3>{layer.title}</h3><p>{layer.body}</p></article>
@@ -650,6 +755,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           <div className="gateLabel">GATE 2 · PACKAGING DECISION</div>
           <p className="eyebrow">TITLE · COVER · HOOK</p>
           <h2>包装承诺必须和正文判断一致</h2>
+          {!currentPackages.length && <div className="researchConclusion"><b>尚未生成包装</b><p>包装不再使用本地规则或历史模板。请返回研究底稿，使用 DeepSeek 基于本次选题、事件证据和底稿重新生成。</p><button className="primary" disabled={packagingGenerating || !deepseekApiKey.trim()} onClick={generatePackaging}>{packagingGenerating ? "DeepSeek 正在生成包装…" : "用 DeepSeek 生成三套包装"}</button></div>}
           <div className="packageList">
             {currentPackages.map((item, index) => (
               <button key={item.title} className={packageIndex === index ? "selected" : ""} onClick={() => { setPackageIndex(index); setPackageApproved(false); setCoverImages({}); setCoverMaterial(null); setCoverError(""); }}>
@@ -661,22 +767,22 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           <div className="packageAudit">
             <div className="coverMock">
               <div className="coverChart"><i /><i /><i /><i /><i /></div>
-              <strong>{currentPackages[packageIndex].cover}</strong>
-              <small>{currentPackages[packageIndex].visual}</small>
+              <strong>{selectedPackage.cover}</strong>
+              <small>{selectedPackage.visual}</small>
             </div>
             <div className="packageLogic">
               <h3>标题 × Hook × 封面审计</h3>
               <dl>
-                <div><dt>标题类型</dt><dd>{currentPackages[packageIndex].type}</dd></div>
-                <div><dt>受众动机</dt><dd>{currentPackages[packageIndex].motive}</dd></div>
-                <div><dt>搜索锚点</dt><dd>{currentPackages[packageIndex].keyword}</dd></div>
-                <div><dt>最强矛盾</dt><dd>{currentPackages[packageIndex].conflict}</dd></div>
-                <div><dt>封面分工</dt><dd>{currentPackages[packageIndex].coverMode}</dd></div>
-                <div><dt>封面类型</dt><dd>{coverDirectionForPackage(currentPackages[packageIndex]).archetype}</dd></div>
-                <div><dt>情绪信号</dt><dd>{coverDirectionForPackage(currentPackages[packageIndex]).emotion} · {coverDirectionForPackage(currentPackages[packageIndex]).signalColor}</dd></div>
+                <div><dt>标题类型</dt><dd>{selectedPackage.type}</dd></div>
+                <div><dt>受众动机</dt><dd>{selectedPackage.motive}</dd></div>
+                <div><dt>搜索锚点</dt><dd>{selectedPackage.keyword}</dd></div>
+                <div><dt>最强矛盾</dt><dd>{selectedPackage.conflict}</dd></div>
+                <div><dt>封面分工</dt><dd>{selectedPackage.coverMode}</dd></div>
+                <div><dt>封面类型</dt><dd>{coverDirectionForPackage(selectedPackage).archetype}</dd></div>
+                <div><dt>情绪信号</dt><dd>{coverDirectionForPackage(selectedPackage).emotion} · {coverDirectionForPackage(selectedPackage).signalColor}</dd></div>
               </dl>
               <div className="packageScores">
-                {Object.entries(currentPackages[packageIndex].scores).map(([key, value]) => (
+                {Object.entries(selectedPackage.scores).map(([key, value]) => (
                   <span key={key}>
                     <small>{({ctr:"点击",search:"搜索",promise:"兑现",oral:"口语"} as Record<string, string>)[key]}</small>
                     <b>{value}</b><i><em style={{width:`${value}%`}} /></i>
@@ -709,10 +815,10 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
                 <figcaption><span>竖版封面 · 3:4</span>{coverImages.portrait && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.portrait!, "png", "金融巨子-竖版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.portrait!, "jpg", "金融巨子-竖版封面")}>JPG</button></span>}</figcaption>
               </figure>
             </div>
-            {(coverImages.landscape || coverImages.portrait) && <p className="coverQaNotice">出图复核：主视觉完整轮廓与全部文字必须在中央安全框内。4:3 四边各留至少12%；3:4 左侧16%、右侧22%、顶部16%、底部26%只放可裁背景。任何主体或文字贴边、越界、截断，都单独重新生成该画幅。</p>}
+            {(coverImages.landscape || coverImages.portrait) && <p className="coverQaNotice">出图复核：主视觉完整轮廓与全部文字必须在中央安全框内。4:3 四边各留至少12%；3:4 顶部20%禁止出现文字，主锤字必须完整位于画面高度22%—44%，右侧22%和底部26%只放可裁背景。任何主体或文字贴边、越界、截断，都单独重新生成该画幅。</p>}
             <p className="keyNotice">API Key 只保存在这台设备的浏览器中；点击生成时发送给本地接口，再由本地接口调用 Poe。</p>
           </div>
-          <div className="studioActions"><button className="primary" onClick={approvePackage}>{packageApproved ? "已确认，进入成稿 →" : "确认这套包装 →"}</button></div>
+          <div className="studioActions"><button className="primary" disabled={!currentPackages.length} onClick={approvePackage}>{packageApproved ? "已确认，进入成稿 →" : "确认这套包装 →"}</button></div>
         </section>
       )}
 

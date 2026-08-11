@@ -58,6 +58,8 @@ def generate(request_data):
     prompt = str(request_data.get("prompt", "")).strip()
     aspect_ratio = str(request_data.get("aspectRatio", "")).strip()
     reference_image = str(request_data.get("referenceImage", "")).strip()
+    allow_person = bool(request_data.get("allowPerson", False))
+    named_person = str(request_data.get("namedPerson", "")).strip()
 
     if not api_key or not prompt or not aspect_ratio:
         return {"ok": False, "status": 400, "error": "缺少 Poe API Key、提示词或画幅参数。"}
@@ -66,7 +68,7 @@ def generate(request_data):
         message_content = prompt
         if reference_image:
             message_content = [
-                {"type": "text", "text": prompt + "\n\nUse the attached source image as the factual main visual. Preserve the recognizable subject and its defining features, but rebuild lighting, background, composition and typography as instructed. Do not merely place a filter over the source."},
+                {"type": "text", "text": prompt + (f"\n\nThe only permitted human is the verified named real person: {named_person}. Preserve that person's recognizable identity from the attached source, and do not invent or add any other human." if allow_person and named_person else "\n\nThis is not a people-led topic. The final image must contain zero humans or human-like forms: no face, body, hand, silhouette, crowd, mannequin, statue, figurine, miniature person, doll, avatar, or humanoid shape. If the attached source contains any person, remove the person completely and do not preserve them. Use only the relevant non-human object, environment, material, or market tension from the source.") + "\n\nRebuild lighting, background, composition and typography as instructed. Do not merely place a filter over the source."},
                 {"type": "image_url", "image_url": {"url": reference_image}},
             ]
         response = httpx.post(

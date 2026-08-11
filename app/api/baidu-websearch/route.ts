@@ -18,6 +18,16 @@ function parseReferenceDate(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function parseUrlDate(value: unknown) {
+  try {
+    const url = new URL(String(value || ""));
+    const match = url.pathname.match(/(?:^|\/)(20\d{2})[-_/]?(0[1-9]|1[0-2])[-_/]?([0-2]\d|3[01])(?:\/|[-_.]|$)/);
+    if (!match) return null;
+    const parsed = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00+08:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  } catch { return null; }
+}
+
 function buildScanQueries(now = new Date()) {
   const chinaNow = new Date(now.getTime() + 8 * 3_600_000);
   const chinaDate = `${chinaNow.getUTCFullYear()}年${chinaNow.getUTCMonth() + 1}月${chinaNow.getUTCDate()}日`;
@@ -36,6 +46,14 @@ function isFreshReference(reference: any) {
   if (!date) return false;
   const ageMs = Date.now() - date.getTime();
   if (ageMs < 0 || ageMs > 48 * 3_600_000) return false;
+  // 搜索接口偶尔把重新抓取时间当成发布时间。URL 中明确存在旧发布日期时，
+  // 以原始文章日期为准，防止 2018 年行情被包装成今天的实时价格。
+  const urlDate = parseUrlDate(reference.url);
+  if (urlDate) {
+    const urlAgeMs = Date.now() - urlDate.getTime();
+    if (urlAgeMs < 0 || urlAgeMs > 48 * 3_600_000) return false;
+    if (Math.abs(date.getTime() - urlDate.getTime()) > 72 * 3_600_000) return false;
+  }
   const query = String(reference.query || "");
   const chinaNow = new Date(Date.now() + 8 * 3_600_000);
   const chinaPublished = new Date(date.getTime() + 8 * 3_600_000);
@@ -160,7 +178,10 @@ export async function POST(request: Request) {
         socialCount: eventEvidence.filter((item) => socialPattern.test(`${item.url} ${item.site}`)).length,
         heat: event.marketReaction, fit: Math.round((event.novelty + event.confidence) / 2), depth: Math.min(100, event.transmission.length * 18 + event.confidence * 0.6),
         freshness: `${scoring.ageHours}小时前`, gates: { hardGate: true, reasons: scoring.warnings }, rejectionReasons: scoring.warnings,
-        evidence: eventEvidence.map((item) => ({ title: item.title, url: item.url, site: item.site, score: 0 })),
+        evidence: eventEvidence.map((item) => ({
+          title: item.title, url: item.url, site: item.site, publishedAt: item.publishedAt,
+          snippet: item.snippet, query: item.query, authoritative: item.authoritative, score: 0,
+        })),
       };
     }).sort((a, b) => b.score - a.score);
     const events = ranked.map((event, index) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));

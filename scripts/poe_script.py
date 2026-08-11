@@ -1,7 +1,9 @@
 import sys
 import re
 import json
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".python_packages"))
 
@@ -155,6 +157,72 @@ def delivery_problems(text):
     return problems
 
 
+def _parse_evidence_time(value):
+    raw = str(value or "").strip().replace("Z", "+00:00")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _url_intrinsic_date(value):
+    try:
+        path = urlparse(str(value or "")).path
+        match = re.search(r"(?:^/|/)(20\d{2})[-_/]?(0[1-9]|1[0-2])[-_/]?([0-2]\d|3[01])(?:/|[-_.]|$)", path)
+        if not match:
+            return None
+        return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)), tzinfo=timezone(timedelta(hours=8))).astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def build_fresh_fact_corpus(topic_context):
+    """Only recent, traceable source text may authorize market numbers."""
+    now = datetime.now(timezone.utc)
+    accepted = []
+    rejected = []
+    for item in topic_context.get("evidence", []) if isinstance(topic_context, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        published = _parse_evidence_time(item.get("publishedAt"))
+        intrinsic = _url_intrinsic_date(item.get("url"))
+        effective = intrinsic or published
+        if not effective or effective > now + timedelta(hours=2) or now - effective > timedelta(hours=72):
+            rejected.append(item.get("title") or item.get("url") or "无标题证据")
+            continue
+        if intrinsic and published and abs((intrinsic - published).total_seconds()) > 72 * 3600:
+            rejected.append(item.get("title") or item.get("url") or "日期冲突证据")
+            continue
+        accepted.append(" ".join(str(item.get(key, "")) for key in ("title", "snippet", "publishedAt", "site", "url")))
+    return "\n".join(accepted), rejected
+
+
+def factual_number_problems(text, topic_context):
+    corpus, rejected = build_fresh_fact_corpus(topic_context)
+    normalized_corpus = re.sub(r"\D", "", corpus)
+    problems = []
+    sensitive = re.compile(r"人民币|离岸|在岸|汇率|美元|日元|欧元|股价|指数|收益率|利率|基点|市值|成交|涨|跌|新高|新低|最高|最低|收盘|开盘")
+    claim_pattern = re.compile(r"\d+(?:\.\d+)?(?:%|％)?|[一二三四五六七八九十两]+年(?:半)?")
+    for sentence in re.split(r"(?<=[。！？])", text):
+        if not sensitive.search(sentence):
+            continue
+        claims = claim_pattern.findall(sentence)
+        for claim in claims:
+            digits = re.sub(r"\D", "", claim)
+            grounded = claim in corpus or (digits and digits in normalized_corpus)
+            if not grounded:
+                excerpt = re.sub(r"\s+", "", sentence)[:90]
+                problems.append(f"行情数字或期限“{claim}”没有出现在任何72小时内的原始证据中（{excerpt}）")
+    if rejected and not corpus and claim_pattern.search(text) and sensitive.search(text):
+        problems.append("本项目没有可用于核验行情数字的近期原始证据，禁止写入具体报价、涨跌幅、日期或历史极值")
+    return list(dict.fromkeys(problems))
+
+
 def completion(client, model, system, user, receipts=None):
     messages = [
         {"role": "system", "content": system},
@@ -203,6 +271,13 @@ def generate_script(request_data):
         for item in research if isinstance(item, dict)
     )
     raw_event_context = json.dumps(topic_context, ensure_ascii=False, indent=2)
+    fresh_fact_corpus, rejected_fact_sources = build_fresh_fact_corpus(topic_context)
+    if not fresh_fact_corpus:
+        return {
+            "ok": False,
+            "status": 422,
+            "error": "当前项目没有携带可核验的72小时内原始证据正文与发布时间，已停止写稿。请回到首页重新扫描热点并用新结果开稿；系统不会再让模型凭标题或常识补写行情事实。",
+        }
     workflow_brief = json.dumps(workflow_context, ensure_ascii=False, indent=2)
     alternative_packaging = json.dumps(packaging_options, ensure_ascii=False, indent=2)
     brief = (
@@ -215,6 +290,10 @@ def generate_script(request_data):
         "这里包含事件摘要、触发因素、时间新鲜度、市场范围、热度和账号匹配评分、硬门结果、来源数量、社交信号以及证据标题/站点/链接。"
         "评分只用于判断选题重要性，不能当作对观众宣读的市场事实；证据链接和标题用于约束事实，不要在正文堆网址。\n"
         f"{raw_event_context}\n\n"
+        "【允许引用具体数字的近期事实账本】\n"
+        "只有下面逐字出现的报价、涨跌幅、日期、基点和历史极值才可进入正文。事实账本为空时，禁止自行补充任何行情数字。\n"
+        f"{fresh_fact_corpus or '空：当前没有包含正文摘要与可信发布时间的近期原始证据。'}\n"
+        f"已排除的无日期、过期或日期冲突来源：{json.dumps(rejected_fact_sources, ensure_ascii=False)}\n\n"
         "【当前已经选定的包装承诺】\n"
         f"标题：{packaging.get('title', topic)}\n"
         f"Hook方向：{packaging.get('hook', '')}\n"
@@ -241,7 +320,7 @@ def generate_script(request_data):
         draft = completion(client, model, WRITER_SYSTEM, brief, receipts)
         final_script = completion(client, model, REVIEWER_SYSTEM, f"{brief}\n\n主笔草稿：\n{draft}", receipts)
         final_script = normalize_oral_paragraphs(extract_script(final_script))
-        problems = delivery_problems(final_script)
+        problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context)
         stages = ["主笔创作", "独立终审重写"]
         repair_round = 0
         while problems and repair_round < 2:
@@ -250,12 +329,12 @@ def generate_script(request_data):
                 client,
                 model,
                 FINALIZER_SYSTEM,
-                f"选题：{topic}\n包装标题：{packaging.get('title', topic)}\n这是第{repair_round}轮成稿修复。当前文本未通过的具体原因：{'；'.join(problems)}。必须逐项修复，不能返回修改建议。\n\n待彻底改写的中间产物：\n{final_script}",
+                f"{brief}\n\n这是第{repair_round}轮成稿修复。当前文本未通过的具体原因：{'；'.join(problems)}。必须逐项修复；找不到近期原始证据的数字必须删除，不能猜测、换一个数字或返回修改建议。\n\n待彻底改写的中间产物：\n{final_script}",
                 receipts,
             )
             final_script = normalize_oral_paragraphs(extract_script(repaired))
             stages.append(f"强制成稿{repair_round}")
-            problems = delivery_problems(final_script)
+            problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context)
         if problems:
             return {
                 "ok": False,

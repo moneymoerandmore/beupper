@@ -9,6 +9,7 @@ if PROJECT_PACKAGES.is_dir():
 
 from poe_image import generate
 from poe_script import generate_script
+from deepseek_packaging import generate_packaging
 
 
 HOST = "127.0.0.1"
@@ -37,13 +38,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "Not found"})
 
     def do_POST(self):
-        if self.path not in ("/generate", "/generate-script"):
+        if self.path not in ("/generate", "/generate-script", "/generate-packaging"):
             self.send_json(404, {"error": "Not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request_data = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = generate_script(request_data) if self.path == "/generate-script" else generate(request_data)
+            if self.path == "/generate-script":
+                result = generate_script(request_data)
+            elif self.path == "/generate-packaging":
+                result = generate_packaging(request_data)
+            else:
+                result = generate(request_data)
             status = 200 if result.get("ok") else int(result.get("status", 502))
             self.send_json(status if status == 200 or 400 <= status < 600 else 502, result)
         except Exception as error:
