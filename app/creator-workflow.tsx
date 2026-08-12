@@ -330,18 +330,17 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
 
   // 首页点击“用这个选题开稿”后，工坊直接切换到该实时选题；不再继续沿用旧项目标题。
   useEffect(() => {
-    if (!hydrated || !selectedTopic?.trim()) return;
+    // Opening the workshop is read-only. Only an explicit start request may create an asset.
+    if (!hydrated || startRequestId <= 0 || !selectedTopic?.trim()) return;
     const nextTopic = selectedTopic.trim();
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
-    const current = projects.find((item: any) => item.id === projectId);
-    const isNewTopic = !current || current.topic !== nextTopic;
     const consumedStartRequestId = Number(window.localStorage.getItem("financial-titan-last-start-request") || 0);
     const explicitRestart = startRequestId > 0 && startRequestId !== consumedStartRequestId;
-    const shouldStartFresh = explicitRestart || isNewTopic;
+    const shouldStartFresh = explicitRestart;
     if (shouldStartFresh) {
       if (explicitRestart) window.localStorage.setItem("financial-titan-last-start-request", String(startRequestId));
       // 同一次开稿请求始终映射到同一个项目 ID，流程推进只覆盖更新这一条记录。
-      const nextId = startRequestId > 0 ? `project-${startRequestId}` : `project-${Date.now()}`;
+      const nextId = `project-${startRequestId}`;
       window.localStorage.setItem("financial-titan-current-project", nextId);
       setProjectId(nextId);
     }
@@ -370,14 +369,12 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
 
   useEffect(() => {
     // 从首页开稿时直接使用请求 ID 初始化，避免先创建临时项目、随后再创建正式项目。
-    const currentId = editProjectId || (startRequestId > 0
-      ? `project-${startRequestId}`
-      : window.localStorage.getItem("financial-titan-current-project") || `project-${Date.now()}`);
+    const currentId = editProjectId || (startRequestId > 0 ? `project-${startRequestId}` : "");
     setProjectId(currentId);
-    window.localStorage.setItem("financial-titan-current-project", currentId);
+    if (currentId) window.localStorage.setItem("financial-titan-current-project", currentId);
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
     const project = projects.find((item: any) => item.id === currentId);
-    const raw = project ? JSON.stringify(project) : window.localStorage.getItem("financial-titan-workflow");
+    const raw = project ? JSON.stringify(project) : null;
     setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
     setDeepseekApiKey(window.localStorage.getItem("financial-titan-deepseek-key") || "");
     if (!raw) { setHydrated(true); return; }
