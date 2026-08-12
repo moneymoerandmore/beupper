@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiUrl } from "./api-client";
 
 function sourceUrlFor(item: any) {
   const candidate = item?.evidence?.find((entry: any) => entry?.url)?.url;
@@ -51,7 +52,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
     setLoading(action);
     setError("");
     try {
-      const response = await fetch("/api/baidu-websearch", {
+      const response = await fetch(apiUrl("/api/baidu-websearch"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey, deepseekApiKey, action }),
@@ -108,7 +109,11 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
               {scan.events.map((item: any) => {
                 const sourceUrl = sourceUrlFor(item);
                 return <div className="rejectionRow" key={item.eventKey || item.id}>
-                  <span title={item.trigger}>{sourceUrl ? <a className="eventSourceLink" href={sourceUrl} target="_blank" rel="noopener noreferrer"><b>{item.rank}. </b>{item.title}<i>↗</i></a> : <><b>{item.rank}. </b>{item.title}</>}</span><span>{item.eventRole || "事件"} · {item.category || "市场事件"}</span><span>{item.sourceCount}/{item.authorityCount}/{item.markets?.length || 0}</span><span>{Math.round(item.score)}</span><span className={item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}><b>{item.status}</b>{item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : ""}</span>
+                  <span className="eventTitle" title={item.trigger}>{sourceUrl ? <a className="eventSourceLink" href={sourceUrl} target="_blank" rel="noopener noreferrer"><b className="eventRank">{item.rank}. </b>{item.title}<i>↗</i></a> : <><b className="eventRank">{item.rank}. </b>{item.title}</>}</span>
+                  <span className="eventCategory">{item.eventRole || "事件"} · {item.category || "市场事件"}</span>
+                  <span className="eventSources" aria-label="来源、权威来源、涉及市场数量"><i>来源</i>{item.sourceCount}<i>权威</i>{item.authorityCount}<i>市场</i>{item.markets?.length || 0}</span>
+                  <span className="eventScore"><i>综合分</i><b>{Math.round(item.score)}</b></span>
+                  <span className={`eventStatus ${item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}`}><b>{item.status}</b>{item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : " · 已进入事件全集"}</span>
                 </div>;
               })}
             </div>

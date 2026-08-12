@@ -1,0 +1,17 @@
+{
+  "name": "financial-titan-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

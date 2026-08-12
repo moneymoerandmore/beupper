@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { downloadCover } from "./image-download";
+import { apiUrl } from "./api-client";
 
 const stepNames = ["选题确认", "研究底稿", "包装确认", "口播成稿", "花生成片", "数据回流"];
 
@@ -10,6 +11,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
   const [selectedId, setSelectedId] = useState("");
   const [links, setLinks] = useState<any[]>([]);
   const [newLink, setNewLink] = useState("");
+  const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
 
   useEffect(() => {
     const raw = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
@@ -39,7 +41,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
     const stored = JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]");
     saveLinks(stored.map((item: any) => item.id === link.id ? { ...item, status: "collecting", error: "" } : item));
     try {
-      const response = await fetch("/api/platform-metrics", {
+      const response = await fetch(apiUrl("/api/platform-metrics"), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: link.inputUrl }),
       });
       const snapshot = await response.json();
@@ -115,6 +117,22 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
 
   return (
     <div className="libraryLayout">
+      <div className="mobileProjectPicker">
+        <span className="mobilePickerLabel">当前项目 · {projects.length ? `${projects.length} 个内容资产` : "暂无内容资产"}</span>
+        <button className={mobilePickerOpen ? "mobilePickerTrigger open" : "mobilePickerTrigger"} onClick={() => setMobilePickerOpen((value) => !value)} aria-expanded={mobilePickerOpen} aria-haspopup="listbox">
+          <span><b>{selected?.packaging?.title || selected?.topic || "选择一个项目"}</b><small>{selected ? `${stepNames[selected.step] || "进行中"} · ${new Date(selected.updatedAt).toLocaleString("zh-CN")}` : "资产库为空"}</small></span>
+          <i>⌄</i>
+        </button>
+        {mobilePickerOpen && <div className="mobilePickerMenu" role="listbox" aria-label="资产项目">
+          {projects.map((project) => {
+            const active = project.id === selectedId;
+            return <button role="option" aria-selected={active} className={active ? "active" : ""} key={project.id} onClick={() => { setSelectedId(project.id); setMobilePickerOpen(false); }}>
+              <span><b>{project.packaging?.title || project.topic || "未命名项目"}</b><small>{stepNames[project.step] || "进行中"} · {new Date(project.updatedAt).toLocaleDateString("zh-CN")}</small></span>
+              <i>{active ? "✓" : ""}</i>
+            </button>;
+          })}
+        </div>}
+      </div>
       <aside className="projectList">
         <div><p className="eyebrow">PROJECT ARCHIVE</p><h2>内容资产库</h2><span>{projects.length} 个项目</span></div>
         {projects.length ? projects.map((project) => (

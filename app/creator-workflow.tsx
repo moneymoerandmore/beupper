@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { downloadCover } from "./image-download";
+import { apiUrl, readJsonResponse } from "./api-client";
 
 const defaultTopic = "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？";
 
@@ -488,7 +489,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     setPackagingError("");
     setPackagingProvenance(null);
     try {
-      const response = await fetch("http://127.0.0.1:4318/generate-packaging", {
+      const response = await fetch(apiUrl("/api/generate-packaging"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -500,7 +501,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
         }),
         signal: AbortSignal.timeout(600_000),
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response, "动态包装");
       if (!response.ok) throw new Error(payload.error || "DeepSeek 包装生成失败");
       const receipts = payload?.provenance?.receipts;
       if (!Array.isArray(receipts) || !receipts.length || !receipts.every((item: any) => item?.responseId)) {
@@ -541,7 +542,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     setScriptError("");
     setScriptProvenance(null);
     try {
-      const response = await fetch("http://127.0.0.1:4318/generate-script", {
+      const response = await fetch(apiUrl("/api/generate-script"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -562,7 +563,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
         }),
         signal: AbortSignal.timeout(600_000),
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response, "动态创作底稿");
       if (!response.ok) throw new Error(payload.error || "大模型写稿失败");
       const receipts = payload?.provenance?.receipts;
       if (!Array.isArray(receipts) || receipts.length === 0 || !receipts.every((item: any) => item?.responseId)) {
@@ -589,14 +590,14 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const baiduApiKey = window.localStorage.getItem("financial-titan-baidu-key") || "";
     if (!baiduApiKey.trim()) throw new Error("请先在首页配置百度 WebSearch API Key，封面需要先搜索主题素材再做图生图。");
     const selected = currentPackages[packageIndex];
-    const response = await fetch("/api/cover-material", {
+    const response = await fetch(apiUrl("/api/cover-material"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey: baiduApiKey, topic, title: selected.title, visual: selected.visual, allowPerson: selected.visualSubjectType === "named_real_person" && Boolean(selected.namedPerson?.trim()), namedPerson: selected.namedPerson || "" }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse(response, "封面素材搜索");
     if (!response.ok) throw new Error(payload.error || "主题素材搜索失败");
-    const imageResponse = await fetch(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}`);
+    const imageResponse = await fetch(apiUrl(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}`));
     if (!imageResponse.ok) throw new Error("已选主题素材无法下载，未继续生成封面。");
     const blob = await imageResponse.blob();
     const referenceImage = await new Promise<string>((resolve, reject) => {
@@ -619,7 +620,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const safeAreaRules = format === "portrait"
       ? `3:4竖版建立两层不可越过的安全框。全局主体安全框：左边界16%，右边界78%，顶部16%，底部74%。更严格的文字安全框：左边界18%，右边界76%，顶部22%，底部44%。主锤字的字框、阴影、描边、辉光以及每一个笔画都必须完整落在文字安全框内，文字上方至少保留相当于一个汉字高度的空白。右侧22%、顶部20%和底部26%只能放可裁切的无关背景。文字块宽度不超过画面58%、高度不超过18%；如果字号与安全框冲突，必须缩小字号和行距，不得移动文字框越界。`
       : `4:3横版建立不可越过的中央安全框：左右、顶部和底部各留画布12%，全部文字、主体完整轮廓、脸部或核心识别特征必须位于中央76%宽、76%高的安全框内。安全框之外只能延展可裁切的无关背景、光影和纹理。文字块宽度不超过画面38%。`;
-    const response = await fetch("http://127.0.0.1:4318/generate", {
+    const response = await fetch(apiUrl("/api/generate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -632,7 +633,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
         prompt: `${coverPrompt}\n\n本次只生成${format === "portrait" ? "竖版" : "横版"}，目标画幅为 ${aspectRatio}。${layoutRules}\n${safeAreaRules}\n背景必须做满整个画布，但所有有意义的信息都必须收进安全框。禁止文字、头部、手部、产品边缘或主体关键部件贴边、出血、越界或被截断。即使平台从四边轻微裁切，主视觉和主锤字仍必须完整。${format === "portrait" ? "最终出图前必须做文字边界复核：从画布顶部向下20%的区域内不得出现任何文字像素；若主锤字、描边或阴影触碰该区域，重新排版并缩小字号，不能输出越界版本。此条优先级高于前文任何关于文字位置的描述。" : ""}`,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse(response, "封面生成");
     if (!response.ok) throw new Error(payload.error || "封面生成失败");
     setCoverImages((current) => ({ ...current, [format]: payload.imageUrl }));
   }
@@ -657,12 +658,12 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     setMetricLoading(true);
     setMetricError("");
     try {
-      const response = await fetch("/api/platform-metrics", {
+      const response = await fetch(apiUrl("/api/platform-metrics"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: videoLink.trim() }),
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response, "投稿数据读取");
       if (!response.ok) throw new Error(payload.error || "页面读取失败");
       setMetricResult(payload);
       const existing = JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]");

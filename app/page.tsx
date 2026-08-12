@@ -5,6 +5,7 @@ import { topicEngineRules } from "./topic-engine";
 import { CreatorWorkflow } from "./creator-workflow";
 import { BaiduSourcePanel } from "./baidu-source-panel";
 import { ProjectLibrary } from "./project-library";
+import MobileApp from "./mobile/mobile-app";
 
 type Topic = {
   id: number;
@@ -140,7 +141,11 @@ export default function Home() {
   }
 
   return (
-    <main className="shell">
+    <>
+      <div className="adaptiveMobileRoot">
+        <MobileApp />
+      </div>
+      <main className="shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brandMark">金</div>
@@ -320,6 +325,7 @@ export default function Home() {
         </div>
       </section>
       {toast && <div className="toast">✓　{toast}</div>}
-    </main>
+      </main>
+    </>
   );
 }

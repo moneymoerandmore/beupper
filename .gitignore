@@ -2,7 +2,9 @@
 
 # dependencies
 /node_modules
+**/node_modules/
 /.python_packages
+**/.python_packages/
 /.pnp
 .pnp.*
 .yarn/*
@@ -16,6 +18,7 @@
 
 # next.js
 /.next/
+**/.next/
 /.vinext/
 /out/
 
@@ -33,6 +36,7 @@ yarn-error.log*
 .env*
 data/content-store.json
 data/latest-hotlists.json
+data/covers/
 workflow/config.local.json
 __pycache__/
 *.pyc
@@ -43,6 +47,10 @@ __pycache__/
 # typescript
 next-env.d.ts
 /dist/
+/toy-dist/
+*.zip
+*.out.log
+*.err.log
 /.wrangler/
 /outputs/
 /work/

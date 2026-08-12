@@ -89,3 +89,4 @@ h1 { font-size:29px; margin:0 0 7px; letter-spacing:-1px; } .subtitle { margin:0
 .landscapeCover>div,.landscapeCover img{aspect-ratio:4/3}.portraitCover>div,.portraitCover img{aspect-ratio:3/4}.savedCovers figure:first-child img{aspect-ratio:4/3}.savedCovers figure:last-child img{aspect-ratio:3/4}
 .poeConfig select{border:1px solid #dcdce4;border-radius:6px;background:white;padding:10px;font:inherit;color:#17171c}
 .dangerButton{border:1px solid #efb4b4;background:#fff5f5;color:#b42318;border-radius:6px;padding:7px 10px;font:inherit;cursor:pointer}.dangerButton:hover{background:#fee2e2;border-color:#dc2626}
+.mobileProjectPicker{display:none}

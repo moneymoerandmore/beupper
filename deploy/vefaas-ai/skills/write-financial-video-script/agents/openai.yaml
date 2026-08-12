@@ -1,0 +1,4 @@
+interface:
+  display_name: "金融视频口播稿"
+  short_description: "把财经热点与证据写成有因果、有故事的逐字口播稿"
+  default_prompt: "使用 $write-financial-video-script，根据选题、包装承诺和证据池直接创作完整财经视频口播稿。"

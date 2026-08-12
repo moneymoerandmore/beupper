@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./mobile/mobile.css";
 
 export const metadata: Metadata = {
   title: "金融巨子 · 内容作战室",

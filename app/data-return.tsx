@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { apiUrl } from "./api-client";
 
 type Asset = { id: string; topic?: string; title?: string; createdAt?: string };
 type Snapshot = {
@@ -45,7 +46,7 @@ export function DataReturn({ notify }: { notify: (message: string) => void }) {
   async function collect(link: PublicationLink) {
     setLinks((current) => current.map((item) => item.id === link.id ? { ...item, status: "collecting", error: "" } : item));
     try {
-      const response = await fetch("/api/platform-metrics", {
+      const response = await fetch(apiUrl("/api/platform-metrics"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: link.inputUrl }),

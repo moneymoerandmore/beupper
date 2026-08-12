@@ -1,0 +1,4 @@
+interface:
+  display_name: "财经视频包装"
+  short_description: "根据实时热点证据生成标题、Hook、封面文案与视觉方向"
+  default_prompt: "使用 $package-financial-video 根据当前财经热点与证据生成三套视频包装方案。"

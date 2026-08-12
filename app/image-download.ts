@@ -1,5 +1,7 @@
+import { apiUrl } from "./api-client";
+
 export async function downloadCover(imageUrl: string, format: "png" | "jpg", name: string) {
-  const source = imageUrl.startsWith("data:") ? imageUrl : `/api/image-source?url=${encodeURIComponent(imageUrl)}`;
+  const source = imageUrl.startsWith("data:") ? imageUrl : apiUrl(`/api/image-source?url=${encodeURIComponent(imageUrl)}`);
   const image = new Image();
   image.decoding = "async";
   image.src = source;

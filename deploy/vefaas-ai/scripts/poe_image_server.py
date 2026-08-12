@@ -14,8 +14,8 @@ from poe_script import generate_script
 from deepseek_packaging import generate_packaging
 
 
-HOST = os.environ.get("HOST", "127.0.0.1")
-PORT = int(os.environ.get("PORT", "4318"))
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8000"))
 COVER_DIR = Path(__file__).resolve().parents[1] / "data" / "covers"
 
 
