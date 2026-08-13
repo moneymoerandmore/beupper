@@ -171,7 +171,7 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
 
 只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0}]}。所有分数0到100，最多输出12个互不重复的分析命题。`;
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: system },
+    { role: "system", content: `${system}\n公司财报、业绩预告、经营指引或资本开支更新属于公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：盈利预期发生了什么变化、估值锚如何移动、盘后或次日价格是否充分反映、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司财报改写成行业趋势。` },
     { role: "user", content: `北京时间${new Date().toISOString()}。从以下事件全集构建因果分析型选题：${JSON.stringify(compactEvents)}` },
   ]);
   const list = (value: any) => Array.isArray(value) ? [...new Set(value.map(String).filter(Boolean))] : [];

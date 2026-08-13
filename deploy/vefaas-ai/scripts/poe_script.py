@@ -68,9 +68,13 @@ FINANCIAL_STORY_REVIEW = """
 额外按“金融巨子”叙事配方终审：稿件必须同时具备通俗的利益故事和扎实的资本机制。检查是否写清关键行动者的目标、筹码与约束；幽默是否帮助理解而非代替论证；历史参照是否真正提供比较而非装饰；每一次转折是否由新证据触发；背景是否在需要时才出现；是否存在空洞宏大词、虚构心理、强行网络梗或对具体创作者的腔调模仿。任何一项不合格，直接改写正文，不要输出评价。
 """
 
-WRITER_SYSTEM += FINANCIAL_STORY_STYLE
-REVIEWER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW
-FINALIZER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW
+COMPANY_EARNINGS_PRIORITY = """
+财报稿遵循公司优先原则：如果核心事件是单一上市公司的财报、业绩预告、经营指引或资本开支更新，全文主角必须是该公司及其股票。主线依次回答盈利预期发生了什么变化、估值锚如何移动、财报后价格是否透支、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场联动只能在本股判断讲清后作为第二层影响，篇幅与重要性不得压过本股。只有多家公司数据形成共同证据时，才可升级为行业主线。
+"""
+
+WRITER_SYSTEM += FINANCIAL_STORY_STYLE + COMPANY_EARNINGS_PRIORITY
+REVIEWER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY
+FINALIZER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY
 
 # Keep the reusable writing skill as the final authority shared by the writer,
 # reviewer and repair pass. Updating the skill therefore changes real output,

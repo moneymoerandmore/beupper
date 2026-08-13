@@ -3,6 +3,7 @@ import json
 import mimetypes
 import re
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -55,6 +56,39 @@ def find_image(value):
     return None
 
 
+def download_provider_image(image_url):
+    """Download a temporary provider asset without regenerating or charging again."""
+    last_error = None
+    headers = {
+        "Accept": "image/avif,image/webp,image/png,image/jpeg,image/*",
+        "User-Agent": "Mozilla/5.0 FinancialTitanCover/1.0",
+        "Connection": "close",
+    }
+    for attempt in range(4):
+        try:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=httpx.Timeout(120.0, connect=25.0),
+                verify=certifi.where(),
+                http2=False,
+            ) as client:
+                downloaded = client.get(image_url, headers=headers)
+                downloaded.raise_for_status()
+                content = downloaded.content
+                content_type = (downloaded.headers.get("content-type") or "").split(";", 1)[0].lower()
+                is_image = content.startswith(b"\x89PNG\r\n\x1a\n") or content.startswith(b"\xff\xd8\xff") or (content.startswith(b"RIFF") and content[8:12] == b"WEBP")
+                if len(content) < 8_000 or not is_image:
+                    raise ValueError("Poe 临时地址没有返回完整图片")
+                return content_type or "image/png", content
+        except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError, httpx.TimeoutException) as error:
+            last_error = error
+            if attempt < 3:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise RuntimeError(f"图片临时地址连续4次读取失败：{type(error).__name__}: {error}") from error
+    raise RuntimeError(f"图片下载失败：{last_error}")
+
+
 def persist_image(image_url, request_id=""):
     """Convert provider-owned output into an immutable project-local asset."""
     COVER_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,16 +100,7 @@ def persist_image(image_url, request_id=""):
         mime_type = match.group(1).lower()
         content = base64.b64decode(match.group(2))
     else:
-        downloaded = httpx.get(
-            image_url,
-            headers={"Accept": "image/avif,image/webp,image/png,image/jpeg,image/*"},
-            follow_redirects=True,
-            timeout=httpx.Timeout(90.0, connect=20.0),
-            verify=certifi.where(),
-        )
-        downloaded.raise_for_status()
-        mime_type = (downloaded.headers.get("content-type") or "image/png").split(";", 1)[0].lower()
-        content = downloaded.content
+        mime_type, content = download_provider_image(image_url)
     if len(content) < 8_000:
         raise ValueError("图片模型返回的图片文件过小或不完整")
     extension = mimetypes.guess_extension(mime_type) or ".png"

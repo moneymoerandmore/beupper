@@ -24,6 +24,10 @@ SYSTEM = """你是“金融巨子”的财经视频包装总编。你的工作�
 REQUIRED_TEXT_FIELDS = ("title", "hook", "cover", "type", "motive", "keyword", "conflict", "coverMode", "visual", "visualSubjectType")
 
 
+SYSTEM += """
+财报包装遵循公司优先原则：单一上市公司的财报、业绩预告、经营指引或资本开支更新，标题、Hook和封面必须首先回答这家公司未来股价怎么看。优先呈现盈利预期差、指引变化、估值锚、财报后价格反应和下一验证信号。行业、供应链与跨市场影响只能是第二层，不能取代本股成为主题；除非证据明确显示多家公司同步变化或行业盈利预测普遍修正，才可升级为行业主线。
+"""
+
 def parse_json(text):
     clean = text.strip()
     clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", clean, flags=re.I | re.S)
