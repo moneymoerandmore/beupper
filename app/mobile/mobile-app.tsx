@@ -27,6 +27,12 @@ export default function MobileApp() {
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
+  const handleSourceValidated = useCallback(() => {}, []);
+  const handleSourceScan = useCallback((value: any) => {
+    setScan(value);
+    setSelectedId(value?.topics?.[0]?.id || 1);
+  }, []);
+
   useEffect(() => {
     const savedScan = window.localStorage.getItem("financial-titan-baidu-last-scan");
     if (savedScan) { try { setScan(JSON.parse(savedScan)); } catch {} }
@@ -83,7 +89,7 @@ export default function MobileApp() {
               <button className="mobileSectionToggle" onClick={() => setSourceOpen((value) => !value)}>
                 <span><small>LIVE SOURCE</small><b>实时热点数据源</b></span><i>{sourceOpen ? "−" : "+"}</i>
               </button>
-              {sourceOpen && <BaiduSourcePanel notify={notify} onValidated={() => {}} onScan={(value) => { setScan(value); setSelectedId(value?.topics?.[0]?.id || 1); }} />}
+              {sourceOpen && <BaiduSourcePanel notify={notify} onValidated={handleSourceValidated} onScan={handleSourceScan} />}
             </section>
 
             <section className="mobileTopics">

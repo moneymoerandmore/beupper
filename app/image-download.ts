@@ -11,10 +11,28 @@ function isLocalGeneratedCover(imageUrl: string) {
   }
 }
 
+export function localizeCoverUrl(imageUrl: string) {
+  if (!imageUrl) return imageUrl;
+  if (imageUrl.startsWith("/generated-covers/")) return imageUrl;
+  if (imageUrl.startsWith("/api/generated-cover?")) {
+    const filename = new URL(imageUrl, "http://localhost").searchParams.get("file") || "";
+    return filename ? `/generated-covers/${encodeURIComponent(filename)}` : imageUrl;
+  }
+  try {
+    const url = new URL(imageUrl);
+    if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && url.port === "4318" && url.pathname.startsWith("/covers/")) {
+      const filename = url.pathname.split("/").pop() || "";
+      return `/generated-covers/${encodeURIComponent(filename)}`;
+    }
+  } catch {}
+  return imageUrl;
+}
+
 export async function downloadCover(imageUrl: string, format: "png" | "jpg", name: string) {
-  const source = imageUrl.startsWith("data:") || isLocalGeneratedCover(imageUrl)
-    ? imageUrl
-    : apiUrl(`/api/image-source?url=${encodeURIComponent(imageUrl)}`);
+  const localized = localizeCoverUrl(imageUrl);
+  const source = localized.startsWith("data:") || localized.startsWith("/generated-covers/") || isLocalGeneratedCover(localized)
+    ? localized
+    : apiUrl(`/api/image-source?url=${encodeURIComponent(localized)}`);
   const response = await fetch(source);
   if (!response.ok) {
     const detail = (await response.text()).trim().slice(0, 120);

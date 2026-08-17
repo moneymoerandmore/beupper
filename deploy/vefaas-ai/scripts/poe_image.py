@@ -16,10 +16,12 @@ if PROJECT_PACKAGES.is_dir():
 
 import certifi
 import httpx
+import requests
 
 
 POE_CHAT_COMPLETIONS_URL = "https://api.poe.com/v1/chat/completions"
 COVER_DIR = Path(__file__).resolve().parents[1] / "data" / "covers"
+PUBLIC_COVER_DIR = Path(__file__).resolve().parents[1] / "public" / "generated-covers"
 
 
 def emit(payload):
@@ -54,6 +56,43 @@ def find_image(value):
         if url_match:
             return url_match.group(0).rstrip(").,;")
     return None
+
+
+def read_streamed_completion(response):
+    """Consume Poe's SSE response so long image jobs do not look like idle HTTP requests."""
+    text_parts = []
+    events = []
+    try:
+        for line in response.iter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except ValueError:
+                continue
+            events.append(event)
+            choices = event.get("choices") if isinstance(event, dict) else None
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta") or {}
+                content = delta.get("content") if isinstance(delta, dict) else None
+                if isinstance(content, str):
+                    text_parts.append(content)
+                elif content is not None:
+                    text_parts.append(json.dumps(content, ensure_ascii=False))
+    except (httpx.RemoteProtocolError, requests.exceptions.ChunkedEncodingError):
+        partial = {"events": events, "content": "".join(text_parts)}
+        if find_image(partial):
+            return partial
+        raise
+    combined = "".join(text_parts)
+    return {"events": events, "content": combined}
 
 
 def download_provider_image(image_url):
@@ -92,6 +131,7 @@ def download_provider_image(image_url):
 def persist_image(image_url, request_id=""):
     """Convert provider-owned output into an immutable project-local asset."""
     COVER_DIR.mkdir(parents=True, exist_ok=True)
+    PUBLIC_COVER_DIR.mkdir(parents=True, exist_ok=True)
     mime_type = "image/png"
     if image_url.startswith("data:image/"):
         match = re.match(r"data:([^;]+);base64,(.+)", image_url, re.S)
@@ -109,6 +149,7 @@ def persist_image(image_url, request_id=""):
     safe_request = re.sub(r"[^A-Za-z0-9_-]+", "", request_id or "")[:36]
     filename = f"{safe_request + '-' if safe_request else ''}{uuid.uuid4().hex}{extension}"
     (COVER_DIR / filename).write_bytes(content)
+    (PUBLIC_COVER_DIR / filename).write_bytes(content)
     return filename
 
 
@@ -123,6 +164,9 @@ def generate(request_data):
 
     if not api_key or not prompt or not aspect_ratio:
         return {"ok": False, "status": 400, "error": "缺少 Poe API Key、提示词或画幅参数。"}
+    reference_bytes = len(reference_image.encode("utf-8"))
+    if reference_bytes > 650_000:
+        return {"ok": False, "status": 413, "error": f"参考图请求体仍然过大（{reference_bytes // 1024}KB），已在发送 Poe 前停止，未产生模型费用。请刷新页面后重新选择素材。"}
 
     try:
         message_content = prompt
@@ -131,55 +175,63 @@ def generate(request_data):
                 {"type": "text", "text": prompt + (f"\n\nThe only permitted human is the verified named real person: {named_person}. Preserve that person's recognizable identity from the attached source, and do not invent or add any other human." if allow_person and named_person else "\n\nThis is not a people-led topic. The final image must contain zero humans or human-like forms: no face, body, hand, silhouette, crowd, mannequin, statue, figurine, miniature person, doll, avatar, or humanoid shape. If the attached source contains any person, remove the person completely and do not preserve them. Use only the relevant non-human object, environment, material, or market tension from the source.") + "\n\nRebuild lighting, background, composition and typography as instructed. Do not merely place a filter over the source."},
                 {"type": "image_url", "image_url": {"url": reference_image}},
             ]
-        response = httpx.post(
-            POE_CHAT_COMPLETIONS_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": message_content}],
-                "stream": False,
-            },
-            # 图片模型经常需要数分钟。连接阶段快速失败，生成读取阶段允许 6 分钟；
-            # 读取超时后不自动重试，避免同一张图重复提交和重复计费。
-            timeout=httpx.Timeout(360.0, connect=20.0),
-            verify=certifi.where(),
-        )
-    except httpx.ReadTimeout:
+        with requests.Session() as client:
+            client.trust_env = False
+            with client.post(
+                POE_CHAT_COMPLETIONS_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "FinancialTitanCover/1.0",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": message_content}],
+                    "stream": True,
+                },
+                stream=True,
+                timeout=(25, 360),
+                verify=certifi.where(),
+            ) as response:
+                request_id = response.headers.get("x-request-id") or response.headers.get("cf-ray") or ""
+                if not response.ok:
+                    raw_error = response.text
+                    try:
+                        payload = response.json()
+                    except ValueError:
+                        payload = None
+                    if isinstance(payload, dict):
+                        error_value = payload.get("error")
+                        if isinstance(error_value, dict):
+                            message = error_value.get("message") or json.dumps(error_value, ensure_ascii=False)
+                        else:
+                            message = error_value or payload.get("message") or payload.get("detail")
+                    else:
+                        message = None
+                    return {
+                        "ok": False,
+                        "status": response.status_code,
+                        "requestId": request_id,
+                        "error": f"Poe {response.status_code}：{str(message or raw_error[:600] or 'Poe 未返回错误正文')}",
+                    }
+                class TextLineResponse:
+                    def iter_lines(self):
+                        return response.iter_lines(decode_unicode=True)
+
+                payload = read_streamed_completion(TextLineResponse())
+    except requests.exceptions.ReadTimeout:
         return {
             "ok": False,
             "status": 504,
             "error": "Poe 图片生成超过 6 分钟仍未返回。为避免重复扣费，本次没有自动重试；请稍后单独重新生成失败的画幅。",
         }
-    except httpx.ConnectTimeout:
+    except requests.exceptions.ConnectTimeout:
         return {"ok": False, "status": 504, "error": "连接 Poe 超时，请检查网络后重试。"}
-    except httpx.RequestError as error:
-        return {"ok": False, "status": 502, "error": f"连接 Poe 失败：{error}"}
-
-    request_id = response.headers.get("x-request-id") or response.headers.get("cf-ray") or ""
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = None
-
-    if not response.is_success:
-        if isinstance(payload, dict):
-            error_value = payload.get("error")
-            if isinstance(error_value, dict):
-                message = error_value.get("message") or json.dumps(error_value, ensure_ascii=False)
-            else:
-                message = error_value or payload.get("message") or payload.get("detail")
-        else:
-            message = None
-        message = str(message or response.text[:600] or "Poe 未返回错误正文")
-        return {
-            "ok": False,
-            "status": response.status_code,
-            "requestId": request_id,
-            "error": f"Poe {response.status_code}：{message}",
-        }
+    except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as error:
+        return {"ok": False, "status": 502, "error": f"Poe 在返回结果前断开连接。为避免重复扣费，系统没有自动重试本次生图请求；请稍后只重试失败画幅。底层错误：{error}"}
+    except requests.exceptions.RequestException as error:
+        return {"ok": False, "status": 502, "error": f"连接 Poe 失败：{type(error).__name__}: {error}"}
 
     image_url = find_image(payload)
     if not image_url:
@@ -196,7 +248,7 @@ def generate(request_data):
         return {"ok": False, "status": 502, "requestId": request_id, "error": f"封面已生成，但保存到本地资产库失败：{type(error).__name__}: {error}"}
     return {
         "ok": True,
-        "imageUrl": f"http://127.0.0.1:4318/covers/{filename}",
+        "imageUrl": f"/generated-covers/{filename}",
         "providerImageUrl": image_url,
         "localFilename": filename,
         "requestId": request_id,

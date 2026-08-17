@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { downloadCover } from "./image-download";
+import { downloadCover, localizeCoverUrl } from "./image-download";
 import { apiUrl } from "./api-client";
 
 const stepNames = ["选题确认", "研究底稿", "包装确认", "口播成稿", "花生成片", "数据回流"];
@@ -149,7 +149,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
           <article className="outputBlock"><h3>选题</h3><p>{selected.topic}</p></article>
           <article className="outputBlock"><h3>研究底稿</h3><div className="savedResearch">{(selected.research || []).map((item: any) => <span key={item.key}><b>{item.key} · {item.title}</b><small>{item.body}</small></span>)}</div></article>
           <article className="outputBlock"><h3>标题、Hook 与封面方案</h3><dl className="savedPackage"><div><dt>标题</dt><dd>{selected.packaging?.title}</dd></div><div><dt>Hook</dt><dd>{selected.packaging?.hook}</dd></div><div><dt>封面主锤字</dt><dd>{selected.packaging?.cover}</dd></div><div><dt>视觉方向</dt><dd>{selected.packaging?.visual}</dd></div></dl></article>
-          {(selected.coverImages?.landscape || selected.coverImages?.portrait) && <article className="outputBlock"><h3>生成封面</h3><div className="savedCovers">{selected.coverImages.landscape && <figure><img src={selected.coverImages.landscape} alt="已保存横版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.landscape, "png", "金融巨子-横版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.landscape, "jpg", "金融巨子-横版封面")}>下载 JPG</button></figcaption></figure>}{selected.coverImages.portrait && <figure><img src={selected.coverImages.portrait} alt="已保存竖版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.portrait, "png", "金融巨子-竖版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.portrait, "jpg", "金融巨子-竖版封面")}>下载 JPG</button></figcaption></figure>}</div></article>}
+          {(selected.coverImages?.landscape || selected.coverImages?.portrait) && <article className="outputBlock"><h3>生成封面</h3><div className="savedCovers">{selected.coverImages.landscape && <figure><img src={localizeCoverUrl(selected.coverImages.landscape)} alt="已保存横版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.landscape, "png", "金融巨子-横版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.landscape, "jpg", "金融巨子-横版封面")}>下载 JPG</button></figcaption></figure>}{selected.coverImages.portrait && <figure><img src={localizeCoverUrl(selected.coverImages.portrait)} alt="已保存竖版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.portrait, "png", "金融巨子-竖版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.portrait, "jpg", "金融巨子-竖版封面")}>下载 JPG</button></figcaption></figure>}</div></article>}
           <article className="outputBlock publicationAssets">
             <div className="blockHead"><h3>投稿链接与平台数据</h3><span>{selectedLinks.length} 个平台</span></div>
             <div className="linkCollector"><label>追加平台视频链接<input value={newLink} onChange={(event) => setNewLink(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addPublication(); }} placeholder="粘贴抖音、小红书、Bilibili、YouTube 或 TikTok 链接" /></label><button className="primary" disabled={!newLink.trim()} onClick={addPublication}>添加并采集</button></div>

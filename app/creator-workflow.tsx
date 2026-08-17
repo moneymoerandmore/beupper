@@ -1,10 +1,51 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { downloadCover } from "./image-download";
+import { downloadCover, localizeCoverUrl } from "./image-download";
 import { apiUrl, readJsonResponse } from "./api-client";
 
 const defaultTopic = "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？";
+
+async function normalizeCoverReference(source: Blob) {
+  const bitmap = await createImageBitmap(source);
+  try {
+    const canvas = document.createElement("canvas");
+    let normalized: Blob | null = null;
+    const byteBudget = 420_000;
+    const attempts = [
+      { maxEdge: 1024, quality: 0.78 },
+      { maxEdge: 896, quality: 0.68 },
+      { maxEdge: 768, quality: 0.58 },
+    ];
+    for (const attempt of attempts) {
+      const scale = Math.min(1, attempt.maxEdge / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器无法处理封面参考图。");
+      context.fillStyle = "#10141c";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(bitmap, 0, 0, width, height);
+      normalized = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+        (result) => result ? resolve(result) : reject(new Error("参考图标准化失败。")),
+        "image/jpeg",
+        attempt.quality,
+      ));
+      if (normalized.size <= byteBudget) break;
+    }
+    if (!normalized) throw new Error("参考图标准化失败。");
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("参考图读取失败。"));
+      reader.readAsDataURL(normalized);
+    });
+  } finally {
+    bitmap.close();
+  }
+}
 
 function researchForTopic(currentTopic: string, context: any = {}) {
   const clean = currentTopic.trim() || defaultTopic;
@@ -597,12 +638,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const imageResponse = await fetch(apiUrl(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}`));
     if (!imageResponse.ok) throw new Error("已选主题素材无法下载，未继续生成封面。");
     const blob = await imageResponse.blob();
-    const referenceImage = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("主题素材读取失败"));
-      reader.readAsDataURL(blob);
-    });
+    const referenceImage = await normalizeCoverReference(blob);
     const material = { ...payload.selected, query: payload.query, requestId: payload.requestId, selectedAt: new Date().toISOString() };
     setCoverMaterial(material);
     return { material, referenceImage };
@@ -632,7 +668,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     });
     const payload = await readJsonResponse(response, "封面生成");
     if (!response.ok) throw new Error(payload.error || "封面生成失败");
-    setCoverImages((current) => ({ ...current, [format]: payload.imageUrl }));
+    setCoverImages((current) => ({ ...current, [format]: localizeCoverUrl(payload.imageUrl) }));
   }
 
   async function generateBothCovers() {
@@ -805,11 +841,11 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
             {coverError && <p className="coverError">{coverError}</p>}
             <div className="generatedCovers">
               <figure className="landscapeCover">
-                {coverImages.landscape ? <img src={coverImages.landscape} alt="GPT-Image-2 生成的4:3横版封面" /> : <div><b>横版 4:3</b><span>适配 Bilibili 等横版封面</span></div>}
+                {coverImages.landscape ? <img src={localizeCoverUrl(coverImages.landscape)} alt="GPT-Image-2 生成的4:3横版封面" /> : <div><b>横版 4:3</b><span>适配 Bilibili 等横版封面</span></div>}
                 <figcaption><span>横版封面 · 4:3</span>{coverImages.landscape && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.landscape!, "png", "金融巨子-横版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.landscape!, "jpg", "金融巨子-横版封面")}>JPG</button></span>}</figcaption>
               </figure>
               <figure className="portraitCover">
-                {coverImages.portrait ? <img src={coverImages.portrait} alt="GPT-Image-2 生成的3:4竖版封面" /> : <div><b>竖版 3:4</b><span>适配抖音、小红书等竖版封面</span></div>}
+                {coverImages.portrait ? <img src={localizeCoverUrl(coverImages.portrait)} alt="GPT-Image-2 生成的3:4竖版封面" /> : <div><b>竖版 3:4</b><span>适配抖音、小红书等竖版封面</span></div>}
                 <figcaption><span>竖版封面 · 3:4</span>{coverImages.portrait && <span className="coverDownloads"><button onClick={() => downloadCover(coverImages.portrait!, "png", "金融巨子-竖版封面")}>PNG</button><button onClick={() => downloadCover(coverImages.portrait!, "jpg", "金融巨子-竖版封面")}>JPG</button></span>}</figcaption>
               </figure>
             </div>
