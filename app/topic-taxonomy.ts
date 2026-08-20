@@ -36,8 +36,10 @@ export const coverageMatrix: CoverageCell[] = [
     key: "corporate",
     label: "公司与信用事件",
     queries: [
-      "全球上市公司 最新 财报 指引 订单 资本开支 回购 分红 融资 并购 违约 破产 股价异动",
-      "latest earnings guidance orders capex buyback merger default bankruptcy stock move",
+      "A股 今日最新 上市公司公告 财报 业绩预告 经营指引 重大合同 回购 分红 股价反应",
+      "港股 今日最新 业绩公告 盈利预警 经营数据 指引 回购 分红 港交所披露 股价反应",
+      "美股 最新盘前盘后 earnings results guidance conference call SEC filing stock reaction",
+      "全球上市公司 今日最新 财报 指引 资本开支 并购 违约 破产 股价异动",
     ],
   },
   {

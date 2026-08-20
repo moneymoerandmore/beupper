@@ -3,7 +3,7 @@ import { buildCausalAnalysisTopics, deriveMarketFollowUpQueries, scoreCausalAnal
 
 export const runtime = "edge";
 
-const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
+const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
 const socialPattern = /weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,19 +36,20 @@ function buildScanQueries(now = new Date()) {
   return [...new Set(discoveryQueries().map((query) => {
     if (/美股|标普|纳斯达克|道琼斯|wall street|global stocks/i.test(query)) return `${chinaDate} 美东交易日${nyDate} 最新收盘 ${query}`;
     if (chinaNow.getUTCHours() >= 15 && /A股|沪指|上证|深成指|创业板|科创|两市/.test(query)) return `${chinaDate} 今日收盘 收盘后发布 ${query}`;
+    if (/财报|业绩|公告|披露|盘前盘后|earnings|results|guidance|filing/i.test(query)) return `${chinaDate} 刚刚 今日最新 ${query}`;
     return `${chinaDate} 过去48小时 ${query}`;
   }))];
 }
 
 function isFreshReference(reference: any) {
   const rawDate = reference.date || reference.published_time || reference.publish_time;
-  const date = parseReferenceDate(rawDate);
+  const urlDate = parseUrlDate(reference.url);
+  const date = parseReferenceDate(rawDate) || urlDate;
   if (!date) return false;
   const ageMs = Date.now() - date.getTime();
   if (ageMs < 0 || ageMs > 48 * 3_600_000) return false;
   // 搜索接口偶尔把重新抓取时间当成发布时间。URL 中明确存在旧发布日期时，
   // 以原始文章日期为准，防止 2018 年行情被包装成今天的实时价格。
-  const urlDate = parseUrlDate(reference.url);
   if (urlDate) {
     const urlAgeMs = Date.now() - urlDate.getTime();
     if (urlAgeMs < 0 || urlAgeMs > 48 * 3_600_000) return false;
@@ -64,6 +65,14 @@ function isFreshReference(reference: any) {
   const usSession = query.match(/美东交易日(\d{4}-\d{2}-\d{2})/);
   if (usSession && !sameChinaDate && !String(rawDate).startsWith(usSession[1])) return false;
   return true;
+}
+
+function freshnessForAge(ageHours: number) {
+  return ageHours <= 2 ? 100 : ageHours <= 8 ? 94 : ageHours <= 24 ? 70 : ageHours <= 48 ? 28 : 0;
+}
+
+function freshnessLane(ageHours: number) {
+  return ageHours <= 2 ? "breaking_2h" : ageHours <= 8 ? "current_session_8h" : ageHours <= 24 ? "today_24h" : "background_48h";
 }
 
 async function search(apiKey: string, query: string, topK = 10) {
@@ -147,7 +156,8 @@ export async function POST(request: Request) {
       const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
     }
     const firstPass = batches.flatMap((batch, batchIndex) => batch.references.map((reference: any, index: number) => formatReference(reference, batch, batchIndex, index)));
-    const firstPassSemantic = firstPass.map((item: any) => ({
+    const firstPassFresh = firstPass.filter(isFreshReference);
+    const firstPassSemantic = firstPassFresh.map((item: any) => ({
       traceId: item.traceId, title: item.title || "", snippet: item.snippet || item.abstract || item.content || "", url: item.url || "",
       site: item.site_name || "", publishedAt: item.date || item.published_time || item.publish_time || "", query: item.query,
       authoritative: authorityPattern.test(referenceText(item)),
@@ -177,7 +187,8 @@ export async function POST(request: Request) {
         trigger: [event.actors.join("、"), event.actions.join("、")].filter(Boolean).join(" · ") || event.title,
         socialCount: eventEvidence.filter((item) => socialPattern.test(`${item.url} ${item.site}`)).length,
         heat: event.marketReaction, fit: Math.round((event.novelty + event.confidence) / 2), depth: Math.min(100, event.transmission.length * 18 + event.confidence * 0.6),
-        freshness: `${scoring.ageHours}小时前`, gates: { hardGate: true, reasons: scoring.warnings }, rejectionReasons: scoring.warnings,
+        freshness: `${scoring.ageHours}小时前`, freshnessScore: freshnessForAge(scoring.ageHours), freshnessLane: freshnessLane(scoring.ageHours),
+        gates: { hardGate: true, reasons: scoring.warnings }, rejectionReasons: scoring.warnings,
         evidence: eventEvidence.map((item) => ({
           title: item.title, url: item.url, site: item.site, publishedAt: item.publishedAt,
           snippet: item.snippet, query: item.query, authoritative: item.authoritative, score: 0,
@@ -187,23 +198,43 @@ export async function POST(request: Request) {
     const events = ranked.map((event, index) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));
     const causal = await buildCausalAnalysisTopics(deepseekApiKey, events);
     const eventById = new Map(events.flatMap((event: any) => [[event.id, event], [event.eventId, event]]));
-    const topics = causal.topics.map((analysis, index) => {
+    const topicCandidates = causal.topics.map((analysis, index) => {
       const linkedEvents = [...new Set([...analysis.observedEventIds, ...analysis.causalEventIds])]
         .map((id) => eventById.get(id)).filter(Boolean) as any[];
       const evidence = [...new Map(linkedEvents.flatMap((event) => event.evidence || []).map((item: any) => [item.url || item.title, item])).values()];
       const sourceCount = new Set(evidence.map((item: any) => item.site || item.url).filter(Boolean)).size;
       const authorityCount = linkedEvents.reduce((sum, event) => sum + (event.authorityCount || 0), 0);
-      const score = scoreCausalAnalysisTopic(analysis);
+      const latestAgeHours = linkedEvents.length ? Math.min(...linkedEvents.map((event: any) => Number(event.ageHours ?? 48))) : 48;
+      const topicFreshnessScore = freshnessForAge(latestAgeHours);
+      const score = scoreCausalAnalysisTopic(analysis, topicFreshnessScore);
       return {
         ...analysis, id: index + 1, score, title: analysis.title,
         thesis: `${analysis.mechanism}${analysis.counterEvidence ? ` 反证是：${analysis.counterEvidence}` : ""}`,
         category: "原因分析", markets: analysis.markets, trigger: `${analysis.causality} · ${analysis.verificationSignals.join("、")}`,
         sourceCount, authorityCount, socialCount: linkedEvents.reduce((sum, event) => sum + (event.socialCount || 0), 0),
         heat: analysis.marketImportance, fit: analysis.explanatoryPower, depth: analysis.evidenceStrength,
-        freshness: "基于本轮事件全集", gates: { hardGate: true, reasons: [] }, rejectionReasons: [], evidence,
+        freshness: `${latestAgeHours}小时前最新动作`, ageHours: latestAgeHours, freshnessScore: topicFreshnessScore, freshnessLane: freshnessLane(latestAgeHours),
+        gates: { hardGate: true, reasons: [] }, rejectionReasons: [], evidence,
         observedEvents: analysis.observedEventIds, causalEvents: analysis.causalEventIds,
       };
-    }).sort((a, b) => b.score - a.score).slice(0, 6).map((topic, index) => ({ ...topic, id: index + 1, status: index < 3 ? "立即做" : "备选" }));
+    }).sort((a, b) => b.score - a.score);
+    const selectedTopics = topicCandidates.slice(0, 6);
+    const freshTopics = topicCandidates.filter((topic) => topic.ageHours <= 8);
+    if (freshTopics.length && !selectedTopics.slice(0, 3).some((topic) => topic.ageHours <= 8)) {
+      const fresh = freshTopics[0];
+      const existing = selectedTopics.findIndex((topic) => topic.title === fresh.title);
+      if (existing >= 0) selectedTopics.splice(existing, 1);
+      selectedTopics.splice(Math.min(2, selectedTopics.length), 0, fresh);
+      selectedTopics.splice(6);
+    }
+    const desiredFreshCount = Math.min(2, freshTopics.length);
+    for (const fresh of freshTopics) {
+      if (selectedTopics.filter((topic) => topic.ageHours <= 8).length >= desiredFreshCount) break;
+      if (selectedTopics.some((topic) => topic.title === fresh.title)) continue;
+      const replaceAt = [...selectedTopics].reverse().findIndex((topic) => topic.ageHours > 8);
+      if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, fresh);
+    }
+    const topics = selectedTopics.map((topic, index) => ({ ...topic, id: index + 1, status: index < 3 ? "立即做" : "备选" }));
     const eventForEvidence = new Map<string, string>(); events.forEach((event) => event.evidenceIds.forEach((id) => eventForEvidence.set(id, event.eventId)));
     const unclassified = new Set(semantic.unclassifiedEvidenceIds); const retainedIds = new Set(references.map((item: any) => item.traceId));
     const traces = collected.map((item) => ({
@@ -213,6 +244,16 @@ export async function POST(request: Request) {
     }));
     const counts = traces.reduce((acc: any, item: any) => ({ ...acc, [item.status]: (acc[item.status] || 0) + 1 }), {});
 
+    const freshnessBuckets = events.reduce((acc: Record<string, number>, event: any) => {
+      acc[event.freshnessLane] = (acc[event.freshnessLane] || 0) + 1; return acc;
+    }, { breaking_2h: 0, current_session_8h: 0, today_24h: 0, background_48h: 0 });
+    const latestByMarket = events.reduce((acc: Record<string, any>, event: any) => {
+      for (const market of event.markets || []) {
+        if (!acc[market] || event.ageHours < acc[market].ageHours) acc[market] = { title: event.title, ageHours: event.ageHours, occurredAt: event.occurredAt };
+      }
+      return acc;
+    }, {});
+
     return Response.json({
       ok: true, scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
       followUpQueryCount: followUp.queries.length, followUpQueries: followUp.queries, references,
@@ -221,7 +262,7 @@ export async function POST(request: Request) {
       topics, rejectedTopics: [], events, discoveredEventCount: events.length,
       categoryCoverage: [...new Set(events.map((item) => item.category || "other"))], mainTopicCount: Math.min(3, topics.length),
       semanticReceipts: semantic.receipts, followUpSemanticReceipt: followUp.receipt, causalSemanticReceipt: causal.receipt,
-      diagnostics: { traces, counts, unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds },
+      diagnostics: { traces, counts, freshnessBuckets, latestByMarket, unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds },
       requestIds: batches.map((batch) => batch.requestId),
     });
   } catch (error) {

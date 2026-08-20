@@ -142,16 +142,17 @@ export async function standardizeFinancialEvents(apiKey: string, references: Sem
 }
 
 export async function deriveMarketFollowUpQueries(apiKey: string, references: SemanticReference[]) {
-  const marketReferences = references
-    .filter((item) => /收盘|盘后|close|closed|涨|跌|surge|plunge|rally|selloff/i.test(`${item.title} ${item.snippet}`))
-    .slice(0, 35)
+  const actionableReferences = references
+    .filter((item) => /收盘|盘前|盘后|close|closed|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call/i.test(`${item.title} ${item.snippet}`))
+    .sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0))
+    .slice(0, 45)
     .map((item) => ({ title: item.title, summary: item.snippet.slice(0, 320), publishedAt: item.publishedAt }));
-  if (!marketReferences.length) return { queries: [], receipt: "" };
+  if (!actionableReferences.length) return { queries: [], receipt: "" };
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: "你是财经行情追因编辑。根据最新收盘与异动摘要，找出尚需追查的具体公司、行业、政策动作或供应链原因，生成最多4条互不重复的搜索查询。不得沿用历史偏好，不得生成泛泛的汇率或宏观查询。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
-    { role: "user", content: `北京时间${new Date().toISOString()}，最新行情证据：${JSON.stringify(marketReferences)}` },
+    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情与刚发布的公司公告。生成两类二次检索：第一类追查指数、行业或个股异动的具体原因；第二类追查财报、业绩预告、经营指引、电话会或交易所披露的官方原文、预期差和本股价格反应。只追输入中动态出现的实体，不得沿用历史偏好，不得生成泛泛宏观查询。最多6条，互不重复，优先最近8小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
+    { role: "user", content: `北京时间${new Date().toISOString()}，最新可追踪证据：${JSON.stringify(actionableReferences)}` },
   ]);
-  return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 4), receipt: result.receipt };
+  return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 6), receipt: result.receipt };
 }
 
 export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
@@ -186,12 +187,12 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
   return { topics, receipt: result.receipt };
 }
 
-export function scoreCausalAnalysisTopic(topic: CausalAnalysisTopic) {
+export function scoreCausalAnalysisTopic(topic: CausalAnalysisTopic, freshness = 0) {
   const causalDepth = topic.causalEventIds.length && topic.mechanism ? topic.explanatoryPower : topic.explanatoryPower * 0.45;
   const causalityFactor = topic.causality === "confirmed" ? 100 : topic.causality === "strong_hypothesis" ? 82 : topic.causality === "possible" ? 60 : 38;
   return Math.round(
-    causalDepth * 0.3 + topic.marketImportance * 0.24 + topic.evidenceStrength * 0.18 +
-    topic.novelty * 0.12 + causalityFactor * 0.1 + topic.confidence * 0.06,
+    causalDepth * 0.25 + topic.marketImportance * 0.2 + topic.evidenceStrength * 0.16 +
+    topic.novelty * 0.1 + causalityFactor * 0.09 + topic.confidence * 0.05 + freshness * 0.15,
   );
 }
 
@@ -202,12 +203,12 @@ export function scoreSemanticEvent(event: SemanticEvent, evidence: SemanticRefer
   const fallbackTimes = evidence.map((item) => Date.parse(item.publishedAt)).filter(Number.isFinite);
   const timestamp = Number.isFinite(occurredAt) ? occurredAt : Math.max(...fallbackTimes, Date.now() - 48 * 3_600_000);
   const ageHours = Math.max(0, (Date.now() - timestamp) / 3_600_000);
-  const freshness = ageHours <= 6 ? 100 : ageHours <= 24 ? 88 : ageHours <= 48 ? 58 : 0;
+  const freshness = ageHours <= 2 ? 100 : ageHours <= 8 ? 94 : ageHours <= 24 ? 70 : ageHours <= 48 ? 28 : 0;
   const evidenceQuality = Math.min(100, sources.size * 18 + authorityCount * 16 + event.confidence * 0.35);
   const breadth = Math.min(100, event.markets.length * 18 + event.sectors.length * 10 + event.assets.length * 7);
   const score = Math.round(
-    freshness * 0.26 + event.marketReaction * 0.22 + evidenceQuality * 0.2 +
-    event.novelty * 0.16 + breadth * 0.1 + event.confidence * 0.06,
+    freshness * 0.34 + event.marketReaction * 0.19 + evidenceQuality * 0.18 +
+    event.novelty * 0.14 + breadth * 0.09 + event.confidence * 0.06,
   );
   const warnings: string[] = [];
   if (sources.size < 2) warnings.push("独立来源少于2个");

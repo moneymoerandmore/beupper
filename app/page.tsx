@@ -224,7 +224,7 @@ export default function Home() {
           </div>
           <div className="engineFoot">
             <span><b>事件全集</b> 所有已标准化事件</span>
-            <span><b>立即做</b> 排名前三</span>
+            <span><b>立即做</b> 排名前三 · 至少一个8小时内事件</span>
             <span><b>备选</b> 排名四至六</span>
             <span><b>诊断提醒</b> 不阻止事件被发现</span>
           </div>

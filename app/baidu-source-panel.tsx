@@ -100,9 +100,10 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
       <div className="sourceMethod"><span>① 通用财经覆盖矩阵</span><span>② 动态实体与动作提取</span><span>③ 事件级语义标准化</span><span>④ 全链路诊断与纯排序</span></div>
       {scan && (
         <div className="liveEvidence">
-          <div><b>{scanStale ? "历史扫描（已过期）" : "最近扫描"}：{new Date(scan.scannedAt).toLocaleString("zh-CN")}</b><span>{scan.queryCount} 组查询{scan.followUpQueryCount ? `（含 ${scan.followUpQueryCount} 组收盘异动追因）` : ""} · 搜索返回 {scan.collectedReferenceCount ?? scan.rawReferenceCount ?? scan.references.length} 条 → 48小时有效 {scan.rawReferenceCount ?? scan.references.length} 条 → 内容去重 {scan.contentDedupCount ?? scan.references.length} 条 · {scan.events?.length ?? scan.discoveredEventCount ?? "—"} 个独立事件 · {scan.topics.length} 个头部候选</span></div>
+          <div><b>{scanStale ? "历史扫描（已过期）" : "最近扫描"}：{new Date(scan.scannedAt).toLocaleString("zh-CN")}</b><span>{scan.queryCount} 组查询{scan.followUpQueryCount ? `（含 ${scan.followUpQueryCount} 组行情追因/公告追踪）` : ""} · 搜索返回 {scan.collectedReferenceCount ?? scan.rawReferenceCount ?? scan.references.length} 条 → 48小时有效 {scan.rawReferenceCount ?? scan.references.length} 条 → 内容去重 {scan.contentDedupCount ?? scan.references.length} 条 · {scan.events?.length ?? scan.discoveredEventCount ?? "—"} 个独立事件 · {scan.topics.length} 个头部候选</span></div>
           {scanStale && <p className="coverError">这份结果已超过90分钟，只用于历史查看，不再作为首页“今日热点”。请重新扫描以获取最新交易时段信息。</p>}
           {scan.categoryCoverage?.length > 0 && <div className="coverageTags">覆盖：{scan.categoryCoverage.map((item: string) => <span key={item}>{item}</span>)}</div>}
+          {scan.diagnostics?.freshnessBuckets && <div className="coverageTags">时效：<span>2小时突发 {scan.diagnostics.freshnessBuckets.breaking_2h || 0}</span><span>8小时交易时段 {scan.diagnostics.freshnessBuckets.current_session_8h || 0}</span><span>24小时今日 {scan.diagnostics.freshnessBuckets.today_24h || 0}</span><span>48小时背景 {scan.diagnostics.freshnessBuckets.background_48h || 0}</span></div>}
           {scan.events?.length > 0 && <div className="rejectionDesk">
             <div className="rejectionHead"><b>今日扫描事件全集</b><span>每一行是一个去重后的事件；高潜选题是其中的头部子集</span></div>
             <div className="rejectionTable"><div className="rejectionRow rejectionHeader"><span># / 事件</span><span>类别</span><span>来源/权威/市场</span><span>分数</span><span>排序状态与诊断</span></div>
@@ -110,7 +111,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
                 const sourceUrl = sourceUrlFor(item);
                 return <div className="rejectionRow" key={item.eventKey || item.id}>
                   <span className="eventTitle" title={item.trigger}>{sourceUrl ? <a className="eventSourceLink" href={sourceUrl} target="_blank" rel="noopener noreferrer"><b className="eventRank">{item.rank}. </b>{item.title}<i>↗</i></a> : <><b className="eventRank">{item.rank}. </b>{item.title}</>}</span>
-                  <span className="eventCategory">{item.eventRole || "事件"} · {item.category || "市场事件"}</span>
+                  <span className="eventCategory">{item.eventRole || "事件"} · {item.category || "市场事件"} · {item.freshness}</span>
                   <span className="eventSources" aria-label="来源、权威来源、涉及市场数量"><i>来源</i>{item.sourceCount}<i>权威</i>{item.authorityCount}<i>市场</i>{item.markets?.length || 0}</span>
                   <span className="eventScore"><i>综合分</i><b>{Math.round(item.score)}</b></span>
                   <span className={`eventStatus ${item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}`}><b>{item.status}</b>{item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : " · 已进入事件全集"}</span>
