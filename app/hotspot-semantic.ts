@@ -162,15 +162,16 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
     occurredAt: event.occurredAt, family: event.family, stage: event.stage, actors: event.actors,
     actions: event.actions, objects: event.objects, sectors: event.sectors, markets: event.markets,
     assets: event.assets, transmission: event.transmission, marketReaction: event.marketReaction,
-    sourceCount: event.sourceCount, authorityCount: event.authorityCount,
+    sourceCount: event.sourceCount, authorityCount: event.authorityCount, rank: event.rank,
+    eventScore: event.score, ageHours: event.ageHours,
   }));
   const system = `你是全球资本市场因果分析编辑。输入是已经标准化的今日事件全集。请把“行情事实”和“原因事件”连接成适合深度视频的分析型选题，而不是重新罗列新闻。
 
 先识别 observed events：指数、行业、公司、债券、汇率或商品的实际价格与资金变化；再识别 causal events：政策监管、财报指引、利率流动性、产业供需、资本流向、地缘冲击等。只有满足时间顺序合理、影响对象匹配、存在清晰传导机制时才能连接。一个监管事件可能解释某个细分板块，不得擅自解释整个大盘；相关性不能写成已确认因果。
 
-优先形成“重要行情 + 具体原因 + 可验证机制”的选题。没有充分根因的重大行情保留为 unresolved；没有明显行情但影响重大的原因事件可以单独进入，但marketImportance应较低。禁止给任何特定国家、汇率、行业或用户曾提及事件固定加权。
+优先形成“重要行情 + 具体原因 + 可验证机制”的选题。没有充分根因的重大行情保留为 unresolved；没有明显行情但影响重大的原因事件必须形成可独立成立的分析题，不能因为暂时缺少股价反应而从选题池消失。事件榜前8名必须各自出现在至少一个题目的 observedEventIds 或 causalEventIds 中；一个题可以覆盖确有因果关系的多个事件，但禁止为了完成覆盖而虚构联系。禁止给任何特定国家、汇率、行业或用户曾提及事件固定加权。
 
-只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0}]}。所有分数0到100，最多输出12个互不重复的分析命题。`;
+只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0}]}。所有分数0到100，最多输出18个互不重复的分析命题。`;
   const result = await deepSeekJson(apiKey, [
     { role: "system", content: `${system}\n公司财报、业绩预告、经营指引或资本开支更新属于公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：盈利预期发生了什么变化、估值锚如何移动、盘后或次日价格是否充分反映、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司财报改写成行业趋势。` },
     { role: "user", content: `北京时间${new Date().toISOString()}。从以下事件全集构建因果分析型选题：${JSON.stringify(compactEvents)}` },

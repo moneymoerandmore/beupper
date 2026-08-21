@@ -659,6 +659,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       body: JSON.stringify({
         apiKey: poeApiKey,
         model: poeModel || "gpt-image-2",
+        projectId,
+        format,
         aspectRatio,
         referenceImage,
         allowPerson: selectedPackage.visualSubjectType === "named_real_person" && Boolean(selectedPackage.namedPerson?.trim()),

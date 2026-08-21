@@ -14,18 +14,39 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
 
   useEffect(() => {
-    const raw = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
-    // 历史版本可能在初始化竞态中写入同 ID 副本；按 ID 只保留最近更新的一份。
-    const byId = new Map<string, any>();
-    for (const item of raw) {
-      const existing = byId.get(item.id);
-      if (!existing || String(item.updatedAt) > String(existing.updatedAt)) byId.set(item.id, item);
+    let cancelled = false;
+    async function loadProjects() {
+      const raw = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
+      const archivedAssets = JSON.parse(window.localStorage.getItem("financial-titan-content-assets") || "[]");
+      const archivedById = new Map(archivedAssets.map((item: any) => [item.id, item]));
+      // 历史版本可能在初始化竞态中写入同 ID 副本；按 ID 只保留最近更新的一份。
+      const byId = new Map<string, any>();
+      for (const item of raw) {
+        const existing = byId.get(item.id);
+        if (!existing || String(item.updatedAt) > String(existing.updatedAt)) byId.set(item.id, item);
+      }
+      let coverIndex: Record<string, any> = {};
+      try {
+        const response = await fetch(`/generated-covers/index.json?t=${Date.now()}`, { cache: "no-store" });
+        if (response.ok) coverIndex = await response.json();
+      } catch {}
+      const saved = [...byId.values()].map((project: any) => {
+        const backup = archivedById.get(project.id) as any;
+        const indexed = coverIndex[project.id] || {};
+        const coverImages = {
+          landscape: project.coverImages?.landscape || backup?.coverImages?.landscape || indexed.landscape,
+          portrait: project.coverImages?.portrait || backup?.coverImages?.portrait || indexed.portrait,
+        };
+        return { ...project, coverImages };
+      }).sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      window.localStorage.setItem("financial-titan-projects", JSON.stringify(saved));
+      if (cancelled) return;
+      setProjects(saved);
+      setSelectedId(saved[0]?.id || "");
+      setLinks(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
     }
-    const saved = [...byId.values()].sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-    if (saved.length !== raw.length) window.localStorage.setItem("financial-titan-projects", JSON.stringify(saved));
-    setProjects(saved);
-    setSelectedId(saved[0]?.id || "");
-    setLinks(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
+    void loadProjects();
+    return () => { cancelled = true; };
   }, []);
 
   const selected = projects.find((item) => item.id === selectedId);

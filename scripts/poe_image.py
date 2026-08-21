@@ -22,6 +22,7 @@ import requests
 POE_CHAT_COMPLETIONS_URL = "https://api.poe.com/v1/chat/completions"
 COVER_DIR = Path(__file__).resolve().parents[1] / "data" / "covers"
 PUBLIC_COVER_DIR = Path(__file__).resolve().parents[1] / "public" / "generated-covers"
+PUBLIC_COVER_INDEX = PUBLIC_COVER_DIR / "index.json"
 
 
 def emit(payload):
@@ -128,7 +129,7 @@ def download_provider_image(image_url):
     raise RuntimeError(f"图片下载失败：{last_error}")
 
 
-def persist_image(image_url, request_id=""):
+def persist_image(image_url, request_id="", project_id="", cover_format=""):
     """Convert provider-owned output into an immutable project-local asset."""
     COVER_DIR.mkdir(parents=True, exist_ok=True)
     PUBLIC_COVER_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,9 +148,23 @@ def persist_image(image_url, request_id=""):
     if extension == ".jpe":
         extension = ".jpg"
     safe_request = re.sub(r"[^A-Za-z0-9_-]+", "", request_id or "")[:36]
-    filename = f"{safe_request + '-' if safe_request else ''}{uuid.uuid4().hex}{extension}"
+    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "-", project_id or "").strip("-")[:80]
+    safe_format = cover_format if cover_format in ("landscape", "portrait") else ""
+    filename = f"{safe_project}-{safe_format}{extension}" if safe_project and safe_format else f"{safe_request + '-' if safe_request else ''}{uuid.uuid4().hex}{extension}"
     (COVER_DIR / filename).write_bytes(content)
     (PUBLIC_COVER_DIR / filename).write_bytes(content)
+    if safe_project and safe_format:
+        try:
+            index = json.loads(PUBLIC_COVER_INDEX.read_text("utf-8")) if PUBLIC_COVER_INDEX.is_file() else {}
+        except (ValueError, OSError):
+            index = {}
+        project_entry = index.get(project_id) if isinstance(index.get(project_id), dict) else {}
+        project_entry[safe_format] = f"/generated-covers/{filename}"
+        project_entry["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        index[project_id] = project_entry
+        temp_index = PUBLIC_COVER_INDEX.with_suffix(".tmp")
+        temp_index.write_text(json.dumps(index, ensure_ascii=False, indent=2), "utf-8")
+        temp_index.replace(PUBLIC_COVER_INDEX)
     return filename
 
 
@@ -159,6 +174,8 @@ def generate(request_data):
     prompt = str(request_data.get("prompt", "")).strip()
     aspect_ratio = str(request_data.get("aspectRatio", "")).strip()
     reference_image = str(request_data.get("referenceImage", "")).strip()
+    project_id = str(request_data.get("projectId", "")).strip()
+    cover_format = str(request_data.get("format", "")).strip()
     allow_person = bool(request_data.get("allowPerson", False))
     named_person = str(request_data.get("namedPerson", "")).strip()
 
@@ -243,7 +260,7 @@ def generate(request_data):
         }
 
     try:
-        filename = persist_image(image_url, request_id)
+        filename = persist_image(image_url, request_id, project_id, cover_format)
     except Exception as error:
         return {"ok": False, "status": 502, "requestId": request_id, "error": f"封面已生成，但保存到本地资产库失败：{type(error).__name__}: {error}"}
     return {

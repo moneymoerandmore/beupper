@@ -114,7 +114,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
                   <span className="eventCategory">{item.eventRole || "事件"} · {item.category || "市场事件"} · {item.freshness}</span>
                   <span className="eventSources" aria-label="来源、权威来源、涉及市场数量"><i>来源</i>{item.sourceCount}<i>权威</i>{item.authorityCount}<i>市场</i>{item.markets?.length || 0}</span>
                   <span className="eventScore"><i>综合分</i><b>{Math.round(item.score)}</b></span>
-                  <span className={`eventStatus ${item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}`}><b>{item.status}</b>{item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : " · 已进入事件全集"}</span>
+                  <span className={`eventStatus ${item.rejectionReasons?.length ? "rejectionReason" : "eventEligible"}`}><b>{item.status}</b>{item.topicCount ? ` · 对应 ${item.topicCount} 个高潜题` : item.rejectionReasons?.length ? ` · ${item.rejectionReasons.join("；")}` : " · 仅保留在事件全集"}</span>
                 </div>;
               })}
             </div>

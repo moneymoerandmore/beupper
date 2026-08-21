@@ -75,6 +75,27 @@ function freshnessLane(ageHours: number) {
   return ageHours <= 2 ? "breaking_2h" : ageHours <= 8 ? "current_session_8h" : ageHours <= 24 ? "today_24h" : "background_48h";
 }
 
+function standaloneAnalysisForEvent(event: any) {
+  const headline = String(event.title || "重要财经事件").replace(/[。？！?!]+$/g, "");
+  const isCorporate = event.family === "corporate" || /财报|业绩|盈利|指引|公告|披露|回购|分红|earnings|guidance/i.test(`${event.title} ${event.summary} ${(event.actions || []).join(" ")}`);
+  const isMarketMove = event.family === "market_move";
+  const title = isCorporate
+    ? `${headline}：本股估值要重算吗？`
+    : isMarketMove ? `${headline}之后，行情还能延续吗？` : `${headline}之后，市场在重估什么？`;
+  const evidenceStrength = Math.min(100, (event.sourceCount || 0) * 18 + (event.authorityCount || 0) * 16 + (event.confidence || 0) * 0.35);
+  return {
+    title, observedEventIds: isMarketMove ? [event.id] : [], causalEventIds: isMarketMove ? [] : [event.id],
+    mechanism: `${event.summary || event.thesis || event.title} ${isCorporate ? "重点判断盈利预期、估值锚与本股价格是否已经充分反映。" : "重点判断影响资产、传导路径和后续价格验证。"}`.slice(0, 120),
+    causality: "possible" as const, counterEvidence: "",
+    verificationSignals: isCorporate
+      ? ["本股价格与成交反应", "盈利预期与估值变化", "管理层后续指引"]
+      : ["相关资产价格反应", "成交与资金持续性", "后续官方信息"],
+    markets: event.markets || [], marketImportance: Math.max(event.marketReaction || 0, isCorporate ? 58 : 50),
+    explanatoryPower: Math.max(event.fit || 0, 64), evidenceStrength,
+    novelty: event.novelty || 0, confidence: event.confidence || 0,
+  };
+}
+
 async function search(apiKey: string, query: string, topK = 10) {
   const rawKey = apiKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
   const qianfanMatch = rawKey.match(/bce-v3\/[A-Za-z0-9._/-]+/);
@@ -198,7 +219,12 @@ export async function POST(request: Request) {
     const events = ranked.map((event, index) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));
     const causal = await buildCausalAnalysisTopics(deepseekApiKey, events);
     const eventById = new Map(events.flatMap((event: any) => [[event.id, event], [event.eventId, event]]));
-    const topicCandidates = causal.topics.map((analysis, index) => {
+    const augmentedAnalyses = [...causal.topics];
+    const modelCoveredEventIds = new Set(causal.topics.flatMap((topic) => [...topic.observedEventIds, ...topic.causalEventIds]));
+    for (const event of events.slice(0, 8)) {
+      if (!modelCoveredEventIds.has(event.id) && !modelCoveredEventIds.has(event.eventId)) augmentedAnalyses.push(standaloneAnalysisForEvent(event));
+    }
+    const topicCandidates = augmentedAnalyses.map((analysis, index) => {
       const linkedEvents = [...new Set([...analysis.observedEventIds, ...analysis.causalEventIds])]
         .map((id) => eventById.get(id)).filter(Boolean) as any[];
       const evidence = [...new Map(linkedEvents.flatMap((event) => event.evidence || []).map((item: any) => [item.url || item.title, item])).values()];
@@ -218,23 +244,47 @@ export async function POST(request: Request) {
         observedEvents: analysis.observedEventIds, causalEvents: analysis.causalEventIds,
       };
     }).sort((a, b) => b.score - a.score);
-    const selectedTopics = topicCandidates.slice(0, 6);
+    const selectedTopics: any[] = [];
+    const requiredTitles = new Set<string>();
+    for (const event of events.slice(0, 8)) {
+      const candidate = topicCandidates.find((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => id === event.id || id === event.eventId));
+      if (candidate && !selectedTopics.some((topic) => topic.title === candidate.title)) {
+        selectedTopics.push(candidate);
+        requiredTitles.add(candidate.title);
+      }
+    }
+    for (const candidate of topicCandidates) {
+      if (selectedTopics.length >= 10) break;
+      if (!selectedTopics.some((topic) => topic.title === candidate.title)) selectedTopics.push(candidate);
+    }
+    selectedTopics.sort((a, b) => b.score - a.score);
     const freshTopics = topicCandidates.filter((topic) => topic.ageHours <= 8);
-    if (freshTopics.length && !selectedTopics.slice(0, 3).some((topic) => topic.ageHours <= 8)) {
+    if (freshTopics.length && !selectedTopics.slice(0, 5).some((topic) => topic.ageHours <= 8)) {
       const fresh = freshTopics[0];
       const existing = selectedTopics.findIndex((topic) => topic.title === fresh.title);
-      if (existing >= 0) selectedTopics.splice(existing, 1);
-      selectedTopics.splice(Math.min(2, selectedTopics.length), 0, fresh);
-      selectedTopics.splice(6);
+      if (existing >= 0) {
+        selectedTopics.splice(existing, 1);
+        selectedTopics.splice(Math.min(4, selectedTopics.length), 0, fresh);
+      } else {
+        const replaceAt = [...selectedTopics].reverse().findIndex((topic) => !requiredTitles.has(topic.title));
+        if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, fresh);
+      }
     }
     const desiredFreshCount = Math.min(2, freshTopics.length);
     for (const fresh of freshTopics) {
       if (selectedTopics.filter((topic) => topic.ageHours <= 8).length >= desiredFreshCount) break;
       if (selectedTopics.some((topic) => topic.title === fresh.title)) continue;
-      const replaceAt = [...selectedTopics].reverse().findIndex((topic) => topic.ageHours > 8);
+      const replaceAt = [...selectedTopics].reverse().findIndex((topic) => topic.ageHours > 8 && !requiredTitles.has(topic.title));
       if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, fresh);
     }
-    const topics = selectedTopics.map((topic, index) => ({ ...topic, id: index + 1, status: index < 3 ? "立即做" : "备选" }));
+    const topics = selectedTopics.slice(0, 10).map((topic, index) => ({ ...topic, id: index + 1, status: index < 5 ? "立即做" : "备选" }));
+    const topicCoverage = new Map<string, number>();
+    for (const topic of topics) for (const id of [...topic.observedEvents, ...topic.causalEvents]) topicCoverage.set(id, (topicCoverage.get(id) || 0) + 1);
+    for (const event of events) {
+      const count = [...new Set([event.id, event.eventId])].reduce((sum, id) => sum + (topicCoverage.get(id) || 0), 0);
+      event.topicCount = count;
+      event.status = count ? "已进入高潜选题" : "已发现，未进入高潜";
+    }
     const eventForEvidence = new Map<string, string>(); events.forEach((event) => event.evidenceIds.forEach((id) => eventForEvidence.set(id, event.eventId)));
     const unclassified = new Set(semantic.unclassifiedEvidenceIds); const retainedIds = new Set(references.map((item: any) => item.traceId));
     const traces = collected.map((item) => ({
@@ -260,7 +310,7 @@ export async function POST(request: Request) {
       collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: 48,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
       topics, rejectedTopics: [], events, discoveredEventCount: events.length,
-      categoryCoverage: [...new Set(events.map((item) => item.category || "other"))], mainTopicCount: Math.min(3, topics.length),
+      categoryCoverage: [...new Set(events.map((item) => item.category || "other"))], mainTopicCount: Math.min(5, topics.length),
       semanticReceipts: semantic.receipts, followUpSemanticReceipt: followUp.receipt, causalSemanticReceipt: causal.receipt,
       diagnostics: { traces, counts, freshnessBuckets, latestByMarket, unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds },
       requestIds: batches.map((batch) => batch.requestId),
