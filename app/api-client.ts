@@ -12,6 +12,8 @@ const aiPaths = new Set([
   "/api/generate",
   "/api/generate-packaging",
   "/api/generate-script",
+  "/api/social-search",
+  "/api/social-login",
 ]);
 
 export function apiUrl(path: string) {

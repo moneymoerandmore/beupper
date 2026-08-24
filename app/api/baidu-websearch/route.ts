@@ -189,7 +189,7 @@ function formatReference(reference: any, batch: any, batchIndex: number, referen
 
 export async function POST(request: Request) {
   try {
-    const { apiKey, deepseekApiKey, action = "test" } = await request.json();
+    const { apiKey, deepseekApiKey, xueqiuCookie = "", twitterAuthToken = "", twitterCt0 = "", action = "test" } = await request.json();
     if (!apiKey) return Response.json({ error: "请填写百度 WebSearch API Key。" }, { status: 400 });
     if (action === "test") {
       const result = await search(apiKey, "今日全球资本市场热点", 3);
@@ -215,6 +215,23 @@ export async function POST(request: Request) {
     const allFollowUpQueries = [...new Set([...corporateFollowUp.queries, ...followUp.queries])];
     for (const query of allFollowUpQueries.filter((item) => !baseQueries.includes(item))) {
       const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
+    }
+    let socialChannels: any = { xueqiu: { ok: false, count: 0, error: xueqiuCookie ? "未执行" : "未配置" }, twitter: { ok: false, count: 0, error: twitterAuthToken && twitterCt0 ? "未执行" : "未配置" } };
+    const socialQueries = allFollowUpQueries.filter((item) => /雪球|twitter|x\/twitter|投资者讨论|分歧|热议/i.test(item)).slice(0, 8);
+    if (socialQueries.length && (xueqiuCookie || (twitterAuthToken && twitterCt0))) {
+      try {
+        const socialResponse = await fetch("http://127.0.0.1:4318/api/social-search", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ queries: socialQueries, xueqiuCookie, twitterAuthToken, twitterCt0 }),
+        });
+        const socialPayload: any = await socialResponse.json();
+        if (socialResponse.ok && socialPayload.ok) {
+          socialChannels = socialPayload.channels || socialChannels;
+          if (socialPayload.references?.length) batches.push({ query: "Agent-Reach社交直连", requestId: "social-local", references: socialPayload.references });
+        } else socialChannels = { ...socialChannels, gatewayError: socialPayload.error || `HTTP ${socialResponse.status}` };
+      } catch (error) {
+        socialChannels = { ...socialChannels, gatewayError: error instanceof Error ? error.message : String(error) };
+      }
     }
 
     const collected = batches.flatMap((batch, batchIndex) => batch.references.map((reference: any, index: number) => formatReference(reference, batch, batchIndex, index)));
@@ -366,6 +383,7 @@ export async function POST(request: Request) {
         corporateCalendarCompanies: corporateFollowUp.companies,
         recentCorporateEventCount: recentCorporateEvents.length,
         socialReferenceCount: semanticReferences.filter((item) => item.social).length,
+        socialChannels,
         extendedHoursReferenceCount: semanticReferences.filter((item) => /盘前|盘后|premarket|pre-market|after.hours|extended.hours/i.test(`${item.title} ${item.snippet} ${item.query}`)).length,
         unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds,
       },

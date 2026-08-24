@@ -12,6 +12,7 @@ if PROJECT_PACKAGES.is_dir():
 from poe_image import generate
 from poe_script import generate_script
 from deepseek_packaging import generate_packaging
+from social_sources import collect_social_sources, open_social_login, social_login_status
 
 
 HOST = os.environ.get("HOST", "127.0.0.1")
@@ -56,13 +57,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.removeprefix("/api")
-        if route not in ("/generate", "/generate-script", "/generate-packaging"):
+        if route not in ("/generate", "/generate-script", "/generate-packaging", "/social-search", "/social-login"):
             self.send_json(404, {"error": "Not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request_data = json.loads(self.rfile.read(length).decode("utf-8"))
-            if route == "/generate-script":
+            if route == "/social-login":
+                platform = request_data.get("platform", "")
+                result = open_social_login(platform) if request_data.get("action") == "start" else social_login_status(platform)
+            elif route == "/social-search":
+                result = collect_social_sources(request_data)
+            elif route == "/generate-script":
                 result = generate_script(request_data)
             elif route == "/generate-packaging":
                 result = generate_packaging(request_data)

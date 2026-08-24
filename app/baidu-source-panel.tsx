@@ -17,6 +17,7 @@ function sourceUrlFor(item: any) {
 export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (message: string) => void; onValidated: (value: boolean) => void; onScan: (scan: any) => void }) {
   const [apiKey, setApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
+  const [socialStatus, setSocialStatus] = useState<any>(null);
   const [validated, setValidated] = useState(false);
   const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
@@ -47,6 +48,26 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
   useEffect(() => {
     if (deepseekApiKey) window.localStorage.setItem("financial-titan-deepseek-key", deepseekApiKey);
   }, [deepseekApiKey]);
+
+  async function socialLogin(platform: "xueqiu" | "twitter", action: "start" | "status") {
+    setLoading(`${platform}-${action}`); setError("");
+    try {
+      const response = await fetch(apiUrl("/api/social-login"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform, action }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "社交登录操作失败");
+      if (action === "start") notify(payload.message || "登录窗口已打开");
+      else {
+        setSocialStatus((current: any) => ({ ...(current || {}), [platform]: payload }));
+        notify(payload.loggedIn
+          ? `${platform === "xueqiu" ? "雪球" : "X"}已检测到登录会话`
+          : (payload.message || payload.error || `${platform === "xueqiu" ? "雪球" : "X"}尚未检测到登录`));
+      }
+    } catch (error) { setError(error instanceof Error ? error.message : "社交登录操作失败"); }
+    finally { setLoading(""); }
+  }
 
   async function call(action: "test" | "scan") {
     setLoading(action);
@@ -96,6 +117,14 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
         <button className="primary" disabled={!validated || !deepseekApiKey || Boolean(loading)} onClick={() => call("scan")}>{loading === "scan" ? "正在召回并标准化全球事件…" : "扫描今日热点"}</button>
       </div>
       <p className="credentialHint">百度千帆 V2 Key 应为完整的 <code>bce-v3/...</code>；AppBuilder Key 会自动尝试对应鉴权头。<code>BSK...</code> 通常是 Brave Search Key，不能用于百度接口。Access Key / Secret Key 也不能填在这里。</p>
+      <details className="socialSourceConfig" open>
+        <summary>雪球与 X/Twitter 直连（Agent-Reach 方法）</summary>
+        <div className="socialLoginRows">
+          <div><span><b>雪球</b><small>{socialStatus?.xueqiu?.loggedIn ? "专用浏览器会话已登录" : socialStatus?.xueqiu?.message || "尚未检查"}</small></span><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("xueqiu", "start")}>打开浏览器登录</button><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("xueqiu", "status")}>{loading === "xueqiu-status" ? "检测中…" : "检查状态"}</button></div>
+          <div><span><b>X / Twitter</b><small>{socialStatus?.twitter?.loggedIn ? "专用浏览器会话已登录" : socialStatus?.twitter?.message || "尚未检查"}</small></span><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("twitter", "start")}>打开浏览器登录</button><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("twitter", "status")}>{loading === "twitter-status" ? "检测中…" : "检查状态"}</button></div>
+        </div>
+        <p className="credentialHint">点击后会打开项目专属浏览器窗口。请正常登录，完成后关闭该窗口，再点“检查状态”。系统不会读取你日常浏览器的账号资料；后续只复用这个专用会话做只读搜索。</p>
+      </details>
       {error && <p className="coverError">{error}</p>}
       <div className="sourceMethod"><span>① 通用财经覆盖矩阵</span><span>② 动态实体与动作提取</span><span>③ 事件级语义标准化</span><span>④ 全链路诊断与纯排序</span></div>
       {scan && (
@@ -105,6 +134,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
           {scan.categoryCoverage?.length > 0 && <div className="coverageTags">覆盖：{scan.categoryCoverage.map((item: string) => <span key={item}>{item}</span>)}</div>}
           {scan.diagnostics?.freshnessBuckets && <div className="coverageTags">时效：<span>2小时突发 {scan.diagnostics.freshnessBuckets.breaking_2h || 0}</span><span>8小时交易时段 {scan.diagnostics.freshnessBuckets.current_session_8h || 0}</span><span>24小时今日 {scan.diagnostics.freshnessBuckets.today_24h || 0}</span><span>48小时背景 {scan.diagnostics.freshnessBuckets.background_48h || 0}</span></div>}
           {scan.diagnostics && <div className="coverageTags">财报雷达：<span>日历发现 {scan.diagnostics.calendarSeedCount || 0}</span><span>8小时内正式财报 {scan.diagnostics.recentCorporateEventCount || 0}</span><span>盘前/盘后证据 {scan.diagnostics.extendedHoursReferenceCount || 0}</span><span>雪球/X等讨论 {scan.diagnostics.socialReferenceCount || 0}</span><span>实体核验查询 {scan.followUpQueryCount || 0}</span></div>}
+          {scan.diagnostics?.socialChannels && <div className="coverageTags">社交直连：<span>雪球 {scan.diagnostics.socialChannels.xueqiu?.ok ? `${scan.diagnostics.socialChannels.xueqiu.count}条` : scan.diagnostics.socialChannels.xueqiu?.error || "失败"}</span><span>X {scan.diagnostics.socialChannels.twitter?.ok ? `${scan.diagnostics.socialChannels.twitter.count}条` : scan.diagnostics.socialChannels.twitter?.error || "失败"}</span></div>}
           {scan.diagnostics?.corporateCalendarCompanies?.length > 0 && <div className="coverageTags">今日财报实体：{scan.diagnostics.corporateCalendarCompanies.map((item: any) => <span key={`${item.name}-${item.ticker}`}>{item.name}{item.ticker ? ` · ${item.ticker}` : ""}</span>)}</div>}
           {scan.events?.length > 0 && <div className="rejectionDesk">
             <div className="rejectionHead"><b>今日扫描事件全集</b><span>每一行是一个去重后的事件；高潜选题是其中的头部子集</span></div>
