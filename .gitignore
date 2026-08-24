@@ -37,6 +37,9 @@ yarn-error.log*
 data/content-store.json
 data/latest-hotlists.json
 data/covers/
+# Project-dedicated Chrome profiles contain cookies, sessions and locked caches.
+# They must stay local and must never be committed.
+data/social-browser/
 workflow/config.local.json
 __pycache__/
 *.pyc
