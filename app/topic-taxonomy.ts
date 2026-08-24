@@ -36,6 +36,9 @@ export const coverageMatrix: CoverageCell[] = [
     key: "corporate",
     label: "公司与信用事件",
     queries: [
+      "今日 财报日历 业绩发布时间 公司名单 A股 港股 美股 中概股",
+      "今日 中概股 财报日历 盘前发布 业绩 电话会 NASDAQ NYSE",
+      "today earnings calendar companies reporting before open after close China ADR Hong Kong",
       "A股 今日最新 上市公司公告 财报 业绩预告 经营指引 重大合同 回购 分红 股价反应",
       "港股 今日最新 业绩公告 盈利预警 经营数据 指引 回购 分红 港交所披露 股价反应",
       "美股 最新盘前盘后 earnings results guidance conference call SEC filing stock reaction",
@@ -71,6 +74,8 @@ export const coverageMatrix: CoverageCell[] = [
     label: "新兴讨论与异常关注",
     queries: [
       "今日 财经 热议 突发 异常上涨 异常下跌 新公司 新政策 雪球 微博",
+      "今日 热门股票 财报 雪球 X Twitter 投资者 热议 分歧 预期",
+      "today earnings stocks premarket after hours X Twitter investor discussion sentiment",
       "today finance breaking unusual move emerging company policy reddit youtube tiktok markets",
     ],
   },

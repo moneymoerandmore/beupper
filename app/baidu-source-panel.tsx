@@ -104,6 +104,8 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
           {scanStale && <p className="coverError">这份结果已超过90分钟，只用于历史查看，不再作为首页“今日热点”。请重新扫描以获取最新交易时段信息。</p>}
           {scan.categoryCoverage?.length > 0 && <div className="coverageTags">覆盖：{scan.categoryCoverage.map((item: string) => <span key={item}>{item}</span>)}</div>}
           {scan.diagnostics?.freshnessBuckets && <div className="coverageTags">时效：<span>2小时突发 {scan.diagnostics.freshnessBuckets.breaking_2h || 0}</span><span>8小时交易时段 {scan.diagnostics.freshnessBuckets.current_session_8h || 0}</span><span>24小时今日 {scan.diagnostics.freshnessBuckets.today_24h || 0}</span><span>48小时背景 {scan.diagnostics.freshnessBuckets.background_48h || 0}</span></div>}
+          {scan.diagnostics && <div className="coverageTags">财报雷达：<span>日历发现 {scan.diagnostics.calendarSeedCount || 0}</span><span>8小时内正式财报 {scan.diagnostics.recentCorporateEventCount || 0}</span><span>盘前/盘后证据 {scan.diagnostics.extendedHoursReferenceCount || 0}</span><span>雪球/X等讨论 {scan.diagnostics.socialReferenceCount || 0}</span><span>实体核验查询 {scan.followUpQueryCount || 0}</span></div>}
+          {scan.diagnostics?.corporateCalendarCompanies?.length > 0 && <div className="coverageTags">今日财报实体：{scan.diagnostics.corporateCalendarCompanies.map((item: any) => <span key={`${item.name}-${item.ticker}`}>{item.name}{item.ticker ? ` · ${item.ticker}` : ""}</span>)}</div>}
           {scan.events?.length > 0 && <div className="rejectionDesk">
             <div className="rejectionHead"><b>今日扫描事件全集</b><span>每一行是一个去重后的事件；高潜选题是其中的头部子集</span></div>
             <div className="rejectionTable"><div className="rejectionRow rejectionHeader"><span># / 事件</span><span>类别</span><span>来源/权威/市场</span><span>分数</span><span>排序状态与诊断</span></div>

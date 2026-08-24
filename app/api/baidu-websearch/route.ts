@@ -1,10 +1,10 @@
 import { discoveryQueries } from "../../topic-taxonomy";
-import { buildCausalAnalysisTopics, deriveMarketFollowUpQueries, scoreCausalAnalysisTopic, scoreSemanticEvent, standardizeFinancialEvents } from "../../hotspot-semantic";
+import { buildCausalAnalysisTopics, deriveCorporateReleaseFollowUpQueries, deriveMarketFollowUpQueries, scoreCausalAnalysisTopic, scoreSemanticEvent, standardizeFinancialEvents } from "../../hotspot-semantic";
 
 export const runtime = "edge";
 
-const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
-const socialPattern = /weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
+const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|investor\.|\/ir(?:\/|-)|gcs-web|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
+const socialPattern = /twitter|weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function referenceText(reference: any) {
@@ -28,6 +28,18 @@ function parseUrlDate(value: unknown) {
   } catch { return null; }
 }
 
+function parseInlineDate(reference: any) {
+  const text = referenceText(reference);
+  const chinaNow = new Date(Date.now() + 8 * 3_600_000);
+  const year = chinaNow.getUTCFullYear();
+  const full = text.match(/(20\d{2})[年\-/](\d{1,2})[月\-/](\d{1,2})日?/);
+  const short = text.match(/(?:^|\D)(\d{1,2})月(\d{1,2})日/);
+  const parts = full ? [Number(full[1]), Number(full[2]), Number(full[3])] : short ? [year, Number(short[1]), Number(short[2])] : null;
+  if (!parts) return null;
+  const parsed = new Date(`${parts[0]}-${String(parts[1]).padStart(2, "0")}-${String(parts[2]).padStart(2, "0")}T12:00:00+08:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function buildScanQueries(now = new Date()) {
   const chinaNow = new Date(now.getTime() + 8 * 3_600_000);
   const chinaDate = `${chinaNow.getUTCFullYear()}年${chinaNow.getUTCMonth() + 1}月${chinaNow.getUTCDate()}日`;
@@ -44,7 +56,7 @@ function buildScanQueries(now = new Date()) {
 function isFreshReference(reference: any) {
   const rawDate = reference.date || reference.published_time || reference.publish_time;
   const urlDate = parseUrlDate(reference.url);
-  const date = parseReferenceDate(rawDate) || urlDate;
+  const date = parseReferenceDate(rawDate) || urlDate || parseInlineDate(reference);
   if (!date) return false;
   const ageMs = Date.now() - date.getTime();
   if (ageMs < 0 || ageMs > 48 * 3_600_000) return false;
@@ -65,6 +77,19 @@ function isFreshReference(reference: any) {
   const usSession = query.match(/美东交易日(\d{4}-\d{2}-\d{2})/);
   if (usSession && !sameChinaDate && !String(rawDate).startsWith(usSession[1])) return false;
   return true;
+}
+
+// 财报预告通常提前数日发布。它不能直接进入“今日事件全集”，但可以作为
+// 今日公司名单的发现种子，触发对正式财报、电话会和价格反应的二次核验。
+function isCorporateCalendarSeed(reference: any) {
+  const query = String(reference.query || "");
+  const text = referenceText(reference);
+  if (!/财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(query)) return false;
+  if (!/财报|业绩|earnings|results|report|conference call/i.test(text)) return false;
+  const date = parseReferenceDate(reference.date || reference.published_time || reference.publish_time) || parseUrlDate(reference.url) || parseInlineDate(reference);
+  if (!date) return false;
+  const ageMs = Date.now() - date.getTime();
+  return ageMs >= 0 && ageMs <= 14 * 24 * 3_600_000;
 }
 
 function freshnessForAge(ageHours: number) {
@@ -123,11 +148,11 @@ async function search(apiKey: string, query: string, topK = 10) {
   throw new Error(lastError);
 }
 
-async function throttledSearch(apiKey: string, query: string, previousRequestAt = 0) {
+async function throttledSearch(apiKey: string, query: string, previousRequestAt = 0, topK = 10) {
   const gap = Date.now() - previousRequestAt;
   if (gap < 1100) await sleep(1100 - gap);
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    try { return { result: await search(apiKey, query), requestedAt: Date.now() }; }
+    try { return { result: await search(apiKey, query, topK), requestedAt: Date.now() }; }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!/qps|rate.?limit|429|too many|频率|并发/i.test(message) || attempt === 2) throw error;
@@ -174,17 +199,21 @@ export async function POST(request: Request) {
 
     const baseQueries = buildScanQueries(); const batches: any[] = []; let previousRequestAt = 0;
     for (const query of baseQueries) {
-      const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
+      const calendarQuery = /财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(query);
+      const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
     }
     const firstPass = batches.flatMap((batch, batchIndex) => batch.references.map((reference: any, index: number) => formatReference(reference, batch, batchIndex, index)));
-    const firstPassFresh = firstPass.filter(isFreshReference);
-    const firstPassSemantic = firstPassFresh.map((item: any) => ({
+    const firstPassSeeds = firstPass.filter((item) => isFreshReference(item) || isCorporateCalendarSeed(item));
+    const firstPassSemantic = firstPassSeeds.map((item: any) => ({
       traceId: item.traceId, title: item.title || "", snippet: item.snippet || item.abstract || item.content || "", url: item.url || "",
       site: item.site_name || "", publishedAt: item.date || item.published_time || item.publish_time || "", query: item.query,
       authoritative: authorityPattern.test(referenceText(item)),
+      social: socialPattern.test(referenceText(item)),
     }));
+    const corporateFollowUp = await deriveCorporateReleaseFollowUpQueries(deepseekApiKey, firstPassSemantic);
     const followUp = await deriveMarketFollowUpQueries(deepseekApiKey, firstPassSemantic);
-    for (const query of followUp.queries.filter((item) => !baseQueries.includes(item))) {
+    const allFollowUpQueries = [...new Set([...corporateFollowUp.queries, ...followUp.queries])];
+    for (const query of allFollowUpQueries.filter((item) => !baseQueries.includes(item))) {
       const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
     }
 
@@ -197,6 +226,7 @@ export async function POST(request: Request) {
       traceId: item.traceId, title: item.title || "", snippet: item.snippet || item.abstract || item.content || "", url: item.url || "",
       site: item.site_name || "", publishedAt: item.date || item.published_time || item.publish_time || "", query: item.query,
       authoritative: authorityPattern.test(referenceText(item)),
+      social: socialPattern.test(referenceText(item)),
     }));
     const semantic = await standardizeFinancialEvents(deepseekApiKey, semanticReferences);
     const referenceById = new Map(semanticReferences.map((item) => [item.traceId, item]));
@@ -212,7 +242,7 @@ export async function POST(request: Request) {
         gates: { hardGate: true, reasons: scoring.warnings }, rejectionReasons: scoring.warnings,
         evidence: eventEvidence.map((item) => ({
           title: item.title, url: item.url, site: item.site, publishedAt: item.publishedAt,
-          snippet: item.snippet, query: item.query, authoritative: item.authoritative, score: 0,
+          snippet: item.snippet, query: item.query, authoritative: item.authoritative, social: Boolean(item.social), score: 0,
         })),
       };
     }).sort((a, b) => b.score - a.score);
@@ -221,7 +251,11 @@ export async function POST(request: Request) {
     const eventById = new Map(events.flatMap((event: any) => [[event.id, event], [event.eventId, event]]));
     const augmentedAnalyses = [...causal.topics];
     const modelCoveredEventIds = new Set(causal.topics.flatMap((topic) => [...topic.observedEventIds, ...topic.causalEventIds]));
-    for (const event of events.slice(0, 8)) {
+    const recentCorporateEvents = events.filter((event: any) =>
+      event.ageHours <= 8 && (event.family === "corporate" || /财报|业绩|盈利|指引|earnings|results|guidance/i.test(`${event.title} ${event.summary}`)),
+    ).slice(0, 4);
+    const protectedEvents = [...new Map([...events.slice(0, 8), ...recentCorporateEvents].map((event: any) => [event.id, event])).values()];
+    for (const event of protectedEvents) {
       if (!modelCoveredEventIds.has(event.id) && !modelCoveredEventIds.has(event.eventId)) augmentedAnalyses.push(standaloneAnalysisForEvent(event));
     }
     const topicCandidates = augmentedAnalyses.map((analysis, index) => {
@@ -246,7 +280,7 @@ export async function POST(request: Request) {
     }).sort((a, b) => b.score - a.score);
     const selectedTopics: any[] = [];
     const requiredTitles = new Set<string>();
-    for (const event of events.slice(0, 8)) {
+    for (const event of protectedEvents) {
       const candidate = topicCandidates.find((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => id === event.id || id === event.eventId));
       if (candidate && !selectedTopics.some((topic) => topic.title === candidate.title)) {
         selectedTopics.push(candidate);
@@ -258,6 +292,20 @@ export async function POST(request: Request) {
       if (!selectedTopics.some((topic) => topic.title === candidate.title)) selectedTopics.push(candidate);
     }
     selectedTopics.sort((a, b) => b.score - a.score);
+    // 刚发布的公司财报不应因为美股尚未开盘、市场反应分暂时为零而消失。
+    // 最多保护三个不同公司的财报题；它们仍按事件证据和时效排序，不固定任何公司名单。
+    const recentCorporateTopics = recentCorporateEvents
+      .map((event: any) => topicCandidates.find((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => id === event.id || id === event.eventId)))
+      .filter(Boolean)
+      .filter((topic: any, index: number, list: any[]) => list.findIndex((item: any) => item.title === topic.title) === index)
+      .slice(0, 3);
+    for (const corporateTopic of recentCorporateTopics) {
+      if (selectedTopics.some((topic) => topic.title === corporateTopic.title)) continue;
+      const replaceAt = [...selectedTopics].reverse().findIndex((topic) => !requiredTitles.has(topic.title));
+      if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, corporateTopic);
+      else if (selectedTopics.length < 10) selectedTopics.push(corporateTopic);
+      requiredTitles.add(corporateTopic.title);
+    }
     const freshTopics = topicCandidates.filter((topic) => topic.ageHours <= 8);
     if (freshTopics.length && !selectedTopics.slice(0, 5).some((topic) => topic.ageHours <= 8)) {
       const fresh = freshTopics[0];
@@ -306,13 +354,21 @@ export async function POST(request: Request) {
 
     return Response.json({
       ok: true, scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
-      followUpQueryCount: followUp.queries.length, followUpQueries: followUp.queries, references,
+      followUpQueryCount: allFollowUpQueries.length, followUpQueries: allFollowUpQueries, references,
       collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: 48,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
       topics, rejectedTopics: [], events, discoveredEventCount: events.length,
       categoryCoverage: [...new Set(events.map((item) => item.category || "other"))], mainTopicCount: Math.min(5, topics.length),
-      semanticReceipts: semantic.receipts, followUpSemanticReceipt: followUp.receipt, causalSemanticReceipt: causal.receipt,
-      diagnostics: { traces, counts, freshnessBuckets, latestByMarket, unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds },
+      semanticReceipts: semantic.receipts, followUpSemanticReceipt: [corporateFollowUp.receipt, followUp.receipt].filter(Boolean).join(","), causalSemanticReceipt: causal.receipt,
+      diagnostics: {
+        traces, counts, freshnessBuckets, latestByMarket,
+        calendarSeedCount: firstPass.filter(isCorporateCalendarSeed).length,
+        corporateCalendarCompanies: corporateFollowUp.companies,
+        recentCorporateEventCount: recentCorporateEvents.length,
+        socialReferenceCount: semanticReferences.filter((item) => item.social).length,
+        extendedHoursReferenceCount: semanticReferences.filter((item) => /盘前|盘后|premarket|pre-market|after.hours|extended.hours/i.test(`${item.title} ${item.snippet} ${item.query}`)).length,
+        unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds,
+      },
       requestIds: batches.map((batch) => batch.requestId),
     });
   } catch (error) {

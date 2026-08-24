@@ -7,6 +7,7 @@ export type SemanticReference = {
   publishedAt: string;
   query: string;
   authoritative: boolean;
+  social?: boolean;
 };
 
 export type SemanticEvent = {
@@ -50,6 +51,8 @@ const extractionSystem = `你是全球财经新闻事件编辑。你的任务不
 事件必须是具体的“行动者—动作—对象—时间”或“资产—价格变化—时间”，不能写成“市场关注汇率”“科技板块值得关注”等主题。动态提取所有公司、机构、官员、国家、产品、行业和资产，不依赖预设名单。
 
 严格区分 rumor、discussion、proposal、official、implemented、market_reaction；拟议措施不能写成已经实施。不同来源描述同一具体动作时合并；同属一个行业但动作、主体或时间不同，必须拆开。每条有效证据必须分配给一个事件；确实无法判断的证据放入 unclassifiedEvidenceIds，禁止静默丢弃。
+
+社交平台内容只用于识别讨论度、主要分歧、拥挤预期和待核验线索，不能把单个用户观点、未经证实数字或涨跌预测写成事实。与某家公司财报有关的雪球、X/Twitter、Reddit讨论，优先把evidenceId并入对应公司事件；只有讨论本身发生异常扩散且构成独立市场现象时，才建立stage=discussion的事件。公司正式披露与盘前/盘后价格变化是两件事件：前者family=corporate，后者family=market_move，并通过transmission描述先后关系。
 
 只输出JSON对象：{"events":[{"eventId":"临时稳定ID","title":"具体事实标题","summary":"两句事实摘要","occurredAt":"ISO时间或空字符串","family":"market_move|monetary|fiscal_macro|regulation_trade|corporate|industry_supply|capital_flow|geopolitics|credit_risk|commodity_fx_rates|other","stage":"rumor|discussion|proposal|official|implemented|market_reaction|unknown","actors":[],"actions":[],"objects":[],"sectors":[],"markets":[],"assets":[],"transmission":[],"evidenceIds":[],"marketReaction":0,"novelty":0,"confidence":0}],"unclassifiedEvidenceIds":[]}。后三个分数为0到100。保持紧凑：title不超过45字，summary不超过100字，每个数组最多8项，不要重复解释。`;
 
@@ -117,7 +120,7 @@ export async function standardizeFinancialEvents(apiKey: string, references: Sem
   for (let index = 0; index < chunks.length; index += 1) {
     const compact = chunks[index].map((item) => ({
       evidenceId: item.traceId, title: item.title, summary: item.snippet.slice(0, 320), site: item.site,
-      publishedAt: item.publishedAt, query: item.query,
+      publishedAt: item.publishedAt, query: item.query, authoritative: item.authoritative, social: Boolean(item.social),
     }));
     const result = await deepSeekJson(apiKey, [
       { role: "system", content: extractionSystem },
@@ -143,16 +146,42 @@ export async function standardizeFinancialEvents(apiKey: string, references: Sem
 
 export async function deriveMarketFollowUpQueries(apiKey: string, references: SemanticReference[]) {
   const actionableReferences = references
-    .filter((item) => /收盘|盘前|盘后|close|closed|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call/i.test(`${item.title} ${item.snippet}`))
+    .filter((item) => /收盘|盘前|盘后|close|closed|premarket|after.hours|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call|雪球|twitter|x\.com|reddit|热议|讨论|sentiment/i.test(`${item.title} ${item.snippet} ${item.site} ${item.url}`))
     .sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0))
     .slice(0, 45)
     .map((item) => ({ title: item.title, summary: item.snippet.slice(0, 320), publishedAt: item.publishedAt }));
   if (!actionableReferences.length) return { queries: [], receipt: "" };
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情与刚发布的公司公告。生成两类二次检索：第一类追查指数、行业或个股异动的具体原因；第二类追查财报、业绩预告、经营指引、电话会或交易所披露的官方原文、预期差和本股价格反应。只追输入中动态出现的实体，不得沿用历史偏好，不得生成泛泛宏观查询。最多6条，互不重复，优先最近8小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
+    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情、公司公告、今日财报日历和社交讨论。生成二次检索：第一类追查指数、行业或个股异动的具体原因；第二类逐一核验日历中今天应发布业绩的重要上市公司；第三类对重要财报公司补齐三个窗口：正式财报/公告原文与预期差、盘前或盘后实时涨跌与成交、雪球及X/Twitter投资者正在争论的核心问题。预告或日历只负责发现公司，绝不能当成已经发布。只追输入中动态出现的实体，不得沿用历史偏好，不得生成泛泛宏观查询。优先覆盖不同公司；同一公司最多生成官方结果、实时价格、社交讨论三条功能不同的查询，禁止近义重复。最多12条，互不重复，优先最近8小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
     { role: "user", content: `北京时间${new Date().toISOString()}，最新可追踪证据：${JSON.stringify(actionableReferences)}` },
   ]);
-  return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 6), receipt: result.receipt };
+  return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 12), receipt: result.receipt };
+}
+
+export async function deriveCorporateReleaseFollowUpQueries(apiKey: string, references: SemanticReference[]) {
+  const calendarEvidence = references
+    .filter((item) => /财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(`${item.query} ${item.title} ${item.snippet}`))
+    .slice(0, 30)
+    .map((item) => ({ title: item.title, summary: item.snippet.slice(0, 500), publishedAt: item.publishedAt, site: item.site }));
+  if (!calendarEvidence.length) return { queries: [], companies: [], receipt: "" };
+  const result = await deepSeekJson(apiKey, [
+    { role: "system", content: "你是上市公司财报日历编辑。只从输入证据中提取按北京时间今天计划发布或已经发布财报的重要上市公司，不得补充记忆中的公司。日历页面可以提前发布，判断对象是页面所写的财报发布日期。公司去重，优先大型公司、热门股票、中概股及对A股港股有映射的公司，最多6家。只输出JSON：{\"companies\":[{\"name\":\"公司常用中文或英文名\",\"ticker\":\"股票代码或空\",\"market\":\"市场或空\"}]}。" },
+    { role: "user", content: `北京时间${new Date().toISOString()}。从这些日历证据提取今日财报公司：${JSON.stringify(calendarEvidence)}` },
+  ]);
+  const companies = (result.data.companies || [])
+    .map((item: any) => ({ name: String(item.name || "").trim(), ticker: String(item.ticker || "").trim(), market: String(item.market || "").trim() }))
+    .filter((item: any) => item.name)
+    .filter((item: any, index: number, list: any[]) => list.findIndex((other: any) => `${other.name}|${other.ticker}`.toLowerCase() === `${item.name}|${item.ticker}`.toLowerCase()) === index)
+    .slice(0, 6);
+  const queries = companies.flatMap((company: any) => {
+    const entity = `${company.name} ${company.ticker}`.trim();
+    return [
+      `${entity} 今日最新财报 正式公告 实际值 市场预期 指引`,
+      `${entity} 财报后 盘前盘后 股价涨跌 成交量 premarket after hours`,
+      `${entity} 财报 雪球 X Twitter 投资者讨论 分歧`,
+    ];
+  });
+  return { queries: [...new Set(queries)].slice(0, 18), companies, receipt: result.receipt };
 }
 
 export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
@@ -162,7 +191,7 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
     occurredAt: event.occurredAt, family: event.family, stage: event.stage, actors: event.actors,
     actions: event.actions, objects: event.objects, sectors: event.sectors, markets: event.markets,
     assets: event.assets, transmission: event.transmission, marketReaction: event.marketReaction,
-    sourceCount: event.sourceCount, authorityCount: event.authorityCount, rank: event.rank,
+    sourceCount: event.sourceCount, authorityCount: event.authorityCount, socialCount: event.socialCount, rank: event.rank,
     eventScore: event.score, ageHours: event.ageHours,
   }));
   const system = `你是全球资本市场因果分析编辑。输入是已经标准化的今日事件全集。请把“行情事实”和“原因事件”连接成适合深度视频的分析型选题，而不是重新罗列新闻。

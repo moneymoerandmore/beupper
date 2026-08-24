@@ -72,9 +72,13 @@ COMPANY_EARNINGS_PRIORITY = """
 财报稿遵循公司优先原则：如果核心事件是单一上市公司的财报、业绩预告、经营指引或资本开支更新，全文主角必须是该公司及其股票。主线依次回答盈利预期发生了什么变化、估值锚如何移动、财报后价格是否透支、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场联动只能在本股判断讲清后作为第二层影响，篇幅与重要性不得压过本股。只有多家公司数据形成共同证据时，才可升级为行业主线。
 """
 
-WRITER_SYSTEM += FINANCIAL_STORY_STYLE + COMPANY_EARNINGS_PRIORITY
-REVIEWER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY
-FINALIZER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY
+COMMUNITY_DISCUSSION_STYLE = """
+当创作底稿含雪球、X/Twitter、Reddit、微博等公开社区证据时，必须让社区内容承担叙事功能，而不是只报“有多少条讨论”。从可见样本中提炼普通投资者最直接的困惑、当前最流行的解释、最有价值的反方质疑，以及财报或价格变化前后的情绪转折；自然放进开头问题、认知冲突或反方段落。可以说“从目前能检索到的公开讨论看”“雪球上争议主要集中在”“X上的讨论更在意”，但必须说明或暗含样本边界。百度WebSearch只能获得被公开索引的帖子、讨论页及媒体引用，并非平台原生完整信息流，因此禁止写“全网都在说”“市场一致认为”，禁止虚构原帖、用户名、原话、点赞量和持仓。社区材料只证明关注和分歧，财报数字、公司动作与实时价格必须由公告、交易所、行情或高可信媒体确认。
+"""
+
+WRITER_SYSTEM += FINANCIAL_STORY_STYLE + COMPANY_EARNINGS_PRIORITY + COMMUNITY_DISCUSSION_STYLE
+REVIEWER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY + COMMUNITY_DISCUSSION_STYLE
+FINALIZER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY + COMMUNITY_DISCUSSION_STYLE
 
 # Keep the reusable writing skill as the final authority shared by the writer,
 # reviewer and repair pass. Updating the skill therefore changes real output,
