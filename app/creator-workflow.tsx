@@ -6,6 +6,16 @@ import { apiUrl, readJsonResponse } from "./api-client";
 
 const defaultTopic = "昨夜美股AI链暴力反弹，今天A股科技跟涨：反转来了，还是又一次诱多？";
 
+function communityInsightScore(item: any) {
+  const text = `${item?.title || ""} ${item?.snippet || ""}`.replace(/\s+/g, " ");
+  let score = 0;
+  if (/我认为|我觉得|我更|在我看来|我们认为|因为|原因|逻辑|解释|预期|担心|质疑|分歧|争论|风险|估值|定价|资本开支|需求|供给|周期|反映|意味着|看多|看空|bullish|bearish|because|expect|concern|thesis|valuation|priced.?in/i.test(text)) score += 2;
+  if (/但是|不过|反而|未必|除非|如果|可能|或许|为什么|关键在于|真正影响|不认同|低估|高估/i.test(text)) score += 1;
+  if (/(^|[\s，。！？])我([们的在]|觉得|认为|担心|倾向)|@\w+.{0,80}(think|believe|expect)/i.test(text)) score += 1;
+  if (/盘前早报|盘后速递|快讯|行情播报|收盘播报|涨幅|跌幅|创.{0,8}新高|报\d|收于|截至.{0,12}(上涨|下跌)/i.test(text) && score < 2) score -= 2;
+  return score;
+}
+
 async function normalizeCoverReference(source: Blob) {
   const bitmap = await createImageBitmap(source);
   try {
@@ -98,7 +108,7 @@ function researchForTopic(currentTopic: string, context: any = {}) {
     },
     {
       key: "市场分歧", title: "先看投资者在争论什么，再决定哪里值得深挖", status: "讨论证据层",
-      body: `本次通过百度 WebSearch 捕获${socialEvidence.length}条被公开索引的雪球、X/Twitter等社区讨论、讨论页或媒体引用；这不是平台原生完整信息流，也不能代表全体用户。主要讨论线索：${socialDebate || "当前尚未捕获有效社区讨论，不能凭空编造市场情绪"}。写作时不要只报讨论数量，要从可见样本中提炼四项社区性内容：普通投资者最直接的困惑、当前最常见的解释、最有价值的反方质疑、财报或价格变化前后的情绪转折。把这些内容自然写成“雪球上现在争得最凶的是……”“X上的讨论更在意……”或“从目前能检索到的公开讨论看……”，用来提出观众真正关心的问题、承接反证或制造认知转折。必须保留样本边界，不能写成“全网都认为”“市场一致认为”，不能虚构原帖、用户名、点赞数、持仓和原话。社交内容只用于识别关注度、分歧、叙事和预期拥挤度；财报数字、公司动作和实时价格仍须回到公告、交易所、行情或高可信媒体核验，个别帖子的预测不能写成事实或市场共识。`,
+      body: `研究阶段已冻结${socialEvidence.length}条具有观点增量的雪球、X/Twitter社区证据；盘前早报、价格涨跌、创新高/新低、公告转述等纯客观事实，即使来自社交平台也已降级，不得为了提到“X”而写入口播。保留的价值必须来自人的思考：对原因的解释、预期差、估值或产业逻辑、担忧与质疑、最强反方、情绪拥挤或什么条件会推翻判断。具体以每条证据的平台、作者、摘要和链接为准。这不是平台完整信息流，也不能代表全体用户。主要讨论线索：${socialDebate || "当前尚未捕获有观点增量的社区讨论，不能凭空编造市场情绪"}。正文引用时先说清“这个人/这类投资者在怎么解释、为什么这样判断”，再说明我是否认同以及它缺哪条验证；不能把“X上的盘前早报说某板块下跌、金价创新高”当成社区洞察。必须保留样本边界，不能写成“全网都认为”“市场一致认为”，不能虚构原帖、用户名、点赞数、持仓和原话。财报数字、公司动作与实时价格仍须回到公告、交易所、行情或高可信媒体核验。`,
     },
     {
       key: "情绪弧线", title: "信息要推动观众的感受变化", status: "可调整草图",
@@ -355,6 +365,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [scriptWaitSeconds, setScriptWaitSeconds] = useState(0);
   const [scriptError, setScriptError] = useState("");
   const [scriptProvenance, setScriptProvenance] = useState<any>(null);
+  const [socialRefreshing, setSocialRefreshing] = useState(false);
+  const [socialRefreshError, setSocialRefreshError] = useState("");
   const [packagingOptions, setPackagingOptions] = useState<any[]>([]);
   const [packagingGenerating, setPackagingGenerating] = useState(false);
   const [packagingError, setPackagingError] = useState("");
@@ -375,6 +387,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     conflict: "", coverMode: "", visual: "", visualSubjectType: "non_human", namedPerson: "", scores: { ctr: 0, search: 0, promise: 0, oral: 0 },
   };
   const contextEvidenceCount = Array.isArray(topicContext?.evidence) ? topicContext.evidence.length : 0;
+  const frozenSocialEvidence = Array.isArray(topicContext?.evidence)
+    ? topicContext.evidence.filter((item: any) => item?.social)
+    : [];
 
   useEffect(() => {
     if (!scriptGenerating) { setScriptWaitSeconds(0); return; }
@@ -526,8 +541,64 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   ];
   const oralWarningCount = oralChecks.filter((item) => !item.ok).length;
 
-  function approveTopic() {
+  async function refreshSocialEvidence(topicValue = topic, contextValue = topicContext) {
+    const cleanTopic = topicValue.trim();
+    if (!cleanTopic || socialRefreshing) return contextValue;
+    setSocialRefreshing(true);
+    setSocialRefreshError("");
+    try {
+      const response = await fetch(apiUrl("/api/social-search"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ queries: [`${cleanTopic} 投资者讨论 分歧`] }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const payload = await readJsonResponse(response, "社区证据采集");
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "雪球与X社区证据采集失败");
+      const regularEvidence = (Array.isArray(contextValue?.evidence) ? contextValue.evidence : [])
+        .filter((item: any) => !item?.social);
+      const rawSocialEvidence = (Array.isArray(payload.references) ? payload.references : []).map((item: any) => ({
+        title: item.title || "",
+        snippet: item.snippet || "",
+        url: item.url || "",
+        site: item.website || (item.platform === "xueqiu" ? "雪球" : "X/Twitter"),
+        publishedAt: item.published_time || "",
+        social: true,
+        platform: item.platform || "",
+        author: item.author || "",
+        engagement: item.engagement || {},
+        query: item.query || cleanTopic,
+      }));
+      const socialEvidence = rawSocialEvidence.filter((item: any) => communityInsightScore(item) >= 2);
+      const nextContext = {
+        ...contextValue,
+        evidence: [...regularEvidence, ...socialEvidence],
+        socialCount: socialEvidence.length,
+        socialEvidence: {
+          refreshedAt: new Date().toISOString(),
+          query: cleanTopic,
+          count: socialEvidence.length,
+          rawCount: rawSocialEvidence.length,
+          discardedObjectiveCount: rawSocialEvidence.length - socialEvidence.length,
+          channels: payload.channels || {},
+        },
+      };
+      setTopicContext(nextContext);
+      notify(`研究底稿已冻结 ${socialEvidence.length} 条有观点增量的社区证据；过滤 ${rawSocialEvidence.length - socialEvidence.length} 条纯事实播报`);
+      return nextContext;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "社区证据采集失败";
+      setSocialRefreshError(message);
+      notify(`社区证据未能补齐：${message}`);
+      return contextValue;
+    } finally {
+      setSocialRefreshing(false);
+    }
+  }
+
+  async function approveTopic() {
     setTopicApproved(true);
+    await refreshSocialEvidence(topic, topicContext);
     setStep(1);
     notify("选题已通过 Gate 1，研究底稿可以继续");
   }
@@ -782,15 +853,21 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
             <span><b>联动</b>美股 → A股科技</span>
             <span><b>分歧</b>趋势反转 vs 超跌回补</span>
           </div>
-          <div className="studioActions"><button className="primary" onClick={approveTopic}>{topicApproved ? "已确认，进入研究 →" : "确认选题并锁定 →"}</button></div>
+          <div className="studioActions"><button className="primary" disabled={socialRefreshing} onClick={approveTopic}>{socialRefreshing ? "正在采集雪球与X证据…" : topicApproved ? "已确认，进入研究 →" : "确认选题并锁定 →"}</button></div>
         </section>
       )}
 
       {step === 1 && (
         <section className="studioPanel">
-          <div className="studioTitle"><div><p className="eyebrow">PEANUTCUT CREATIVE BRIEF</p><h2>动态创作底稿</h2></div><button className="primary" disabled={packagingGenerating || !deepseekApiKey.trim()} onClick={generatePackaging}>{packagingGenerating ? "DeepSeek 正在生成包装…" : "底稿确认，用大模型生成包装 →"}</button></div>
+          <div className="studioTitle"><div><p className="eyebrow">PEANUTCUT CREATIVE BRIEF</p><h2>动态创作底稿</h2></div><button className="primary" disabled={packagingGenerating || socialRefreshing || !deepseekApiKey.trim()} onClick={generatePackaging}>{packagingGenerating ? "DeepSeek 正在生成包装…" : "底稿确认，用大模型生成包装 →"}</button></div>
           <div className="poeConfig"><label>DeepSeek API Key<input type="password" value={deepseekApiKey} onChange={(event) => setDeepseekApiKey(event.target.value)} placeholder="仅保存在当前浏览器" autoComplete="off" /></label><label>包装模型<select value={scriptModel} onChange={(event) => setScriptModel(event.target.value)}><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="deepseek-v4-flash">DeepSeek V4 Flash</option></select></label></div>
           {packagingError && <p className="coverError">{packagingError}</p>}
+          <div className="socialEvidencePanel">
+            <div><b>社区争议证据</b><span>{topicContext?.socialEvidence?.refreshedAt ? `冻结于 ${new Date(topicContext.socialEvidence.refreshedAt).toLocaleString("zh-CN")}` : "尚未采集"}</span><button className="ghost" disabled={socialRefreshing} onClick={() => void refreshSocialEvidence()}>{socialRefreshing ? "正在刷新…" : "刷新社区证据"}</button></div>
+            {socialRefreshError && <p className="coverError">{socialRefreshError}</p>}
+            {frozenSocialEvidence.length ? <div className="socialEvidenceList">{frozenSocialEvidence.slice(0, 12).map((item: any, index: number) => <a href={item.url} target="_blank" rel="noopener noreferrer" key={item.url || `${item.title}-${index}`}><i>{item.site || "社区"}</i><span><b>{item.author || "公开用户"}</b><small>{item.snippet || item.title}</small></span><em>↗</em></a>)}</div> : <p>当前项目还没有可用的雪球/X帖子。点击刷新后，采集结果和渠道诊断会保存进本项目；没有证据时，后续模型不得虚构社区观点。</p>}
+            {topicContext?.socialEvidence?.channels && <small className="socialEvidenceDiagnostic">原始召回 {topicContext.socialEvidence.rawCount ?? frozenSocialEvidence.length} 条 · 观点证据 {frozenSocialEvidence.length} 条 · 过滤纯事实播报 {topicContext.socialEvidence.discardedObjectiveCount || 0} 条　雪球：{topicContext.socialEvidence.channels.xueqiu?.count || 0} 条{topicContext.socialEvidence.channels.xueqiu?.error ? ` · ${topicContext.socialEvidence.channels.xueqiu.error}` : ""}　X：{topicContext.socialEvidence.channels.twitter?.count || 0} 条{topicContext.socialEvidence.channels.twitter?.error ? ` · ${topicContext.socialEvidence.channels.twitter.error}` : ""}</small>}
+          </div>
           <div className="researchGrid">
             {currentResearch.map((layer) => (
               <article key={layer.key}><div><b>{layer.key}</b><em>{layer.status}</em></div><h3>{layer.title}</h3><p>{layer.body}</p></article>

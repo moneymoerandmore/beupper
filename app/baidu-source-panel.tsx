@@ -23,6 +23,14 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
   const [error, setError] = useState("");
   const [scan, setScan] = useState<any>(null);
   const [scanStale, setScanStale] = useState(false);
+  const [scanWaitSeconds, setScanWaitSeconds] = useState(0);
+
+  useEffect(() => {
+    if (loading !== "scan") { setScanWaitSeconds(0); return; }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setScanWaitSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   useEffect(() => {
     setApiKey(window.localStorage.getItem("financial-titan-baidu-key") || "");
@@ -61,8 +69,8 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
       if (action === "start") notify(payload.message || "登录窗口已打开");
       else {
         setSocialStatus((current: any) => ({ ...(current || {}), [platform]: payload }));
-        notify(payload.loggedIn
-          ? `${platform === "xueqiu" ? "雪球" : "X"}已检测到登录会话`
+        notify(payload.loggedIn && payload.searchReady !== false
+          ? `${platform === "xueqiu" ? "雪球" : "X"}已检测到可用登录会话`
           : (payload.message || payload.error || `${platform === "xueqiu" ? "雪球" : "X"}尚未检测到登录`));
       }
     } catch (error) { setError(error instanceof Error ? error.message : "社交登录操作失败"); }
@@ -77,6 +85,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey, deepseekApiKey, action }),
+        signal: AbortSignal.timeout(action === "scan" ? 360_000 : 40_000),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "百度搜索请求失败");
@@ -93,7 +102,8 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
         notify(`今日扫描完成，形成 ${payload.topics.length} 个有效候选，其中 ${payload.mainTopicCount} 个达到主推门槛`);
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : "连接失败");
+      const message = error instanceof Error ? error.message : "连接失败";
+      setError(/timeout|timed out|abort/i.test(message) ? "本轮扫描已超过6分钟并停止，旧扫描结果仍保留。请稍后重试。" : message);
       if (action === "test") {
         setValidated(false);
         onValidated(false);
@@ -114,16 +124,16 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
         <label>API Key<input type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setValidated(false); onValidated(false); }} placeholder="仅保存在当前浏览器" autoComplete="off" /></label>
         <label>DeepSeek Key<input type="password" value={deepseekApiKey} onChange={(event) => setDeepseekApiKey(event.target.value)} placeholder="动态事件理解" autoComplete="off" /></label>
         <button className="ghost" disabled={!apiKey || Boolean(loading)} onClick={() => call("test")}>{loading === "test" ? "验证中…" : "验证连接"}</button>
-        <button className="primary" disabled={!validated || !deepseekApiKey || Boolean(loading)} onClick={() => call("scan")}>{loading === "scan" ? "正在召回并标准化全球事件…" : "扫描今日热点"}</button>
+        <button className="primary" disabled={!validated || !deepseekApiKey || Boolean(loading)} onClick={() => call("scan")}>{loading === "scan" ? `正在召回并标准化 · ${scanWaitSeconds}秒` : "扫描今日热点"}</button>
       </div>
       <p className="credentialHint">百度千帆 V2 Key 应为完整的 <code>bce-v3/...</code>；AppBuilder Key 会自动尝试对应鉴权头。<code>BSK...</code> 通常是 Brave Search Key，不能用于百度接口。Access Key / Secret Key 也不能填在这里。</p>
       <details className="socialSourceConfig" open>
         <summary>雪球与 X/Twitter 直连（Agent-Reach 方法）</summary>
         <div className="socialLoginRows">
-          <div><span><b>雪球</b><small>{socialStatus?.xueqiu?.loggedIn ? "专用浏览器会话已登录" : socialStatus?.xueqiu?.message || "尚未检查"}</small></span><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("xueqiu", "start")}>打开浏览器登录</button><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("xueqiu", "status")}>{loading === "xueqiu-status" ? "检测中…" : "检查状态"}</button></div>
+          <div><span><b>雪球</b><small>{socialStatus?.xueqiu?.loggedIn && socialStatus?.xueqiu?.searchReady !== false ? "专用浏览器会话已登录，可搜索" : socialStatus?.xueqiu?.message || "尚未检查"}</small></span><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("xueqiu", "start")}>打开浏览器登录</button><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("xueqiu", "status")}>{loading === "xueqiu-status" ? "检测中…" : "检查状态"}</button></div>
           <div><span><b>X / Twitter</b><small>{socialStatus?.twitter?.loggedIn ? "专用浏览器会话已登录" : socialStatus?.twitter?.message || "尚未检查"}</small></span><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("twitter", "start")}>打开浏览器登录</button><button className="ghost" disabled={Boolean(loading)} onClick={() => socialLogin("twitter", "status")}>{loading === "twitter-status" ? "检测中…" : "检查状态"}</button></div>
         </div>
-        <p className="credentialHint">点击后会打开项目专属浏览器窗口。请正常登录，完成后关闭该窗口，再点“检查状态”。系统不会读取你日常浏览器的账号资料；后续只复用这个专用会话做只读搜索。</p>
+        <p className="credentialHint">点击后会打开项目专属浏览器窗口。正常登录后可直接点“检查状态”，窗口无需关闭。系统不会读取你日常浏览器的账号资料；后续只复用这个专用会话做只读搜索。</p>
       </details>
       {error && <p className="coverError">{error}</p>}
       <div className="sourceMethod"><span>① 通用财经覆盖矩阵</span><span>② 动态实体与动作提取</span><span>③ 事件级语义标准化</span><span>④ 全链路诊断与纯排序</span></div>

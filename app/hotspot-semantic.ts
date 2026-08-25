@@ -66,6 +66,7 @@ async function deepSeekJson(apiKey: string, messages: any[]) {
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(90_000),
       body: JSON.stringify({
         model: "deepseek-v4-flash", messages: requestMessages, thinking: { type: "disabled" },
         response_format: { type: "json_object" }, max_tokens: 20000,

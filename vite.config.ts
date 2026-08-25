@@ -44,9 +44,17 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      watch: {
+        // Persistent Chrome profiles contain locked SQLite cookie databases.
+        // They are runtime data, not source files, and watching them can crash
+        // Vite on Windows with EBUSY while a social login window is open.
+        ignored: ["**/data/social-browser/**"],
+        ...(isCodexSeatbeltSandbox
+          ? { useFsEvents: false, usePolling: true }
+          : {}),
+      },
+    },
     plugins: [
       vinext(),
       sites(),

@@ -17,6 +17,7 @@ import httpx
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOCIAL_PROFILE_ROOT = PROJECT_ROOT / "data" / "social-browser"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
+SOCIAL_DEBUG_PORTS = {"xueqiu": 9331, "twitter": 9332}
 
 
 def _browser_executable():
@@ -33,18 +34,55 @@ def _profile_dir(platform):
     return target
 
 
+def _stop_headless_profile_browser(platform):
+    """Stop only stale headless Chrome roots using this project's profile."""
+    if os.name != "nt":
+        return 0
+    profile = str(_profile_dir(platform)).replace("'", "''")
+    script = (
+        "$targets = Get-CimInstance Win32_Process | Where-Object { "
+        f"$_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*{profile}*' "
+        "-and $_.CommandLine -match '--headless' -and $_.CommandLine -notmatch '--type=' }; "
+        "$count = @($targets).Count; "
+        "$targets | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
+        "$count"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", script],
+        capture_output=True, text=True, timeout=12,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        count = int((completed.stdout or "0").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        count = 0
+    if count:
+        time.sleep(1.2)
+    return count
+
+
 def open_social_login(platform):
     if platform not in ("xueqiu", "twitter"):
         return {"ok": False, "status": 400, "error": "不支持的社交平台"}
     browser = _browser_executable()
     if not browser:
         return {"ok": False, "status": 500, "error": "没有找到 Chrome 或 Edge"}
+    stopped = _stop_headless_profile_browser(platform)
     url = "https://xueqiu.com/" if platform == "xueqiu" else "https://x.com/home"
     subprocess.Popen(
-        [str(browser), f"--user-data-dir={_profile_dir(platform)}", "--no-first-run", "--no-default-browser-check", url],
+        [
+            str(browser), f"--user-data-dir={_profile_dir(platform)}",
+            f"--remote-debugging-port={SOCIAL_DEBUG_PORTS[platform]}",
+            "--remote-debugging-address=127.0.0.1",
+            "--no-first-run", "--no-default-browser-check", url,
+        ],
         cwd=str(PROJECT_ROOT), creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     )
-    return {"ok": True, "platform": platform, "message": "登录窗口已打开；完成登录后请关闭该窗口，再回到页面检查状态。"}
+    return {
+        "ok": True, "platform": platform,
+        "message": ("已清理残留后台会话，登录窗口已重新打开。" if stopped else "登录窗口已打开。")
+        + "完成登录后可直接回到页面检查状态，无需关闭窗口。",
+    }
 
 
 def _with_browser(platform, callback):
@@ -53,6 +91,14 @@ def _with_browser(platform, callback):
     if not executable:
         raise RuntimeError("没有找到 Chrome 或 Edge")
     with sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{SOCIAL_DEBUG_PORTS[platform]}", timeout=2500
+            )
+            if browser.contexts:
+                return callback(browser.contexts[0])
+        except Exception:
+            pass
         context = playwright.chromium.launch_persistent_context(
             str(_profile_dir(platform)), executable_path=str(executable), headless=True,
             args=["--disable-gpu", "--no-first-run"], viewport={"width": 1280, "height": 900},
@@ -68,38 +114,62 @@ def social_login_status(platform):
         return {"ok": False, "status": 400, "error": "不支持的社交平台"}
     try:
         def probe(context):
-            cookie_names = {item.get("name", "") for item in context.cookies()}
-            if platform == "xueqiu" and ({"xq_a_token", "u"} & cookie_names):
-                return {"ok": True, "platform": platform, "loggedIn": True, "verifiedBy": "session-cookie"}
+            cookies = context.cookies()
+            cookie_names = {item.get("name", "") for item in cookies}
+            # xq_a_token is also issued to anonymous visitors. Only Xueqiu's
+            # non-zero user id cookie proves an authenticated account session.
+            xueqiu_user_cookie = next((item for item in cookies if item.get("name") == "u"), None)
+            xueqiu_authenticated = bool(
+                xueqiu_user_cookie and str(xueqiu_user_cookie.get("value") or "").strip() not in ("", "0")
+            )
             if platform == "twitter" and "auth_token" in cookie_names:
                 return {"ok": True, "platform": platform, "loggedIn": True, "verifiedBy": "session-cookie"}
 
             page = context.pages[0] if context.pages else context.new_page()
             page.goto("https://xueqiu.com/" if platform == "xueqiu" else "https://x.com/home", wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3500)
-            cookie_names = {item.get("name", "") for item in context.cookies()}
+            cookies = context.cookies()
+            cookie_names = {item.get("name", "") for item in cookies}
             if platform == "xueqiu":
-                signed_in = bool({"xq_a_token", "u"} & cookie_names) or (
+                xueqiu_user_cookie = next((item for item in cookies if item.get("name") == "u"), None)
+                signed_in = bool(
+                    xueqiu_user_cookie and str(xueqiu_user_cookie.get("value") or "").strip() not in ("", "0")
+                ) or (
                     page.locator("a[href*='/u/'], .user-name, [class*='avatar']").count() > 0
-                    and "login" not in page.url
+                    and page.locator("text=登录").count() == 0
                 )
             else:
                 signed_in = "auth_token" in cookie_names or (
                     "/login" not in page.url
                     and page.locator("[data-testid='SideNav_AccountSwitcher_Button'], a[data-testid='AppTabBar_Home_Link'], a[href='/home']").count() > 0
                 )
-            return {
+            result = {
                 "ok": True,
                 "platform": platform,
                 "loggedIn": signed_in,
                 "verifiedBy": "session-cookie-or-account-ui" if signed_in else "none",
                 "message": "已检测到专用浏览器登录会话" if signed_in else "专用浏览器中尚未发现有效登录会话；请确认是在弹出的窗口里完成登录并已关闭窗口",
             }
+            if platform == "xueqiu" and signed_in:
+                capability = page.evaluate("""async () => {
+                  const response = await fetch('/query/v1/search/status.json?q=%E8%8B%B1%E4%BC%9F%E8%BE%BE&count=1&page=1', {credentials: 'include', headers: {'Accept': 'application/json'}});
+                  const text = await response.text();
+                  return {status: response.status, json: text.trim().startsWith('{')};
+                }""")
+                result["searchReady"] = bool(capability.get("json"))
+                if not result["searchReady"]:
+                    result["message"] = "账号已登录，但雪球搜索接口返回安全页/网页壳；请在专属窗口完成手机号、账号安全或验证码提示后再检查"
+            return result
         return _with_browser(platform, probe)
     except Exception as error:
         message = str(error)
-        if "user data directory is already in use" in message.lower() or "processsingleton" in message.lower():
-            message = "登录窗口仍开着，请完成登录并关闭窗口后再检查"
+        lowered = message.lower()
+        if (
+            "user data directory is already in use" in lowered
+            or "processsingleton" in lowered
+            or "target page, context or browser has been closed" in lowered
+        ):
+            message = "当前登录窗口由旧版本方式打开。请关闭该专属窗口，重新点一次“打开浏览器登录”，之后无需关闭即可检查状态"
         return {"ok": True, "platform": platform, "loggedIn": False, "error": message[:220], "message": message[:220]}
 
 
@@ -124,11 +194,54 @@ def search_xueqiu(query, cookie, limit=20):
             def fetch_in_session(context):
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto("https://xueqiu.com/", wait_until="domcontentloaded", timeout=30000)
-                target = f"https://xueqiu.com/statuses/search.json?source=all&q={quote(query)}&count={min(limit, 20)}&page=1&sort=time"
-                result = page.evaluate("""async (url) => { const response = await fetch(url, {credentials: 'include'}); return {status: response.status, text: await response.text()}; }""", target)
-                if result["status"] >= 400:
-                    raise RuntimeError(f"HTTP {result['status']}")
-                return json.loads(result["text"])
+                cookies = context.cookies()
+                user_cookie = next((item for item in cookies if item.get("name") == "u"), None)
+                if not user_cookie or str(user_cookie.get("value") or "").strip() in ("", "0"):
+                    raise RuntimeError("雪球专属浏览器尚未形成有效用户登录态，请重新登录并完成可能出现的手机号或账号安全验证")
+                targets = [
+                    f"https://xueqiu.com/query/v1/search/status.json?q={quote(query)}&count={min(limit, 20)}&page=1",
+                    f"https://xueqiu.com/statuses/search.json?source=all&q={quote(query)}&count={min(limit, 20)}&page=1&sort=time",
+                ]
+                result = page.evaluate("""async (urls) => {
+                  const attempts = [];
+                  for (const url of urls) {
+                    const response = await fetch(url, {credentials: 'include', headers: {'Accept': 'application/json'}});
+                    const text = await response.text();
+                    attempts.push({status: response.status, text: text.slice(0, 160)});
+                    if (response.ok && text.trim().startsWith('{')) return {ok: true, payload: JSON.parse(text)};
+                  }
+                  return {ok: false, attempts};
+                }""", targets)
+                if not result.get("ok"):
+                    # Some Xueqiu accounts receive an HTML shell from both JSON
+                    # endpoints. Fall back to the signed-in search page instead.
+                    page.goto(f"https://xueqiu.com/k?q={quote(query)}", wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_timeout(3500)
+                    cards = page.locator(".timeline__item, [class*='timeline__item'], article")
+                    rows = []
+                    for index in range(min(cards.count(), limit)):
+                        card = cards.nth(index)
+                        text = _clean_text(card.inner_text())
+                        links = card.locator("a[href]")
+                        href = ""
+                        for link_index in range(links.count()):
+                            candidate = links.nth(link_index).get_attribute("href") or ""
+                            if re.search(r"/\d+/\d+", candidate):
+                                href = candidate
+                                break
+                        if text and href:
+                            rows.append({
+                                "id": href.rstrip("/").split("/")[-1],
+                                "text": text,
+                                "source_link": f"https://xueqiu.com{href}" if href.startswith("/") else href,
+                                "user": {"screen_name": text.split(" ", 1)[0][:40]},
+                            })
+                    if rows:
+                        return {"list": rows}
+                    attempts = result.get("attempts") or []
+                    statuses = ",".join(str(item.get("status")) for item in attempts)
+                    raise RuntimeError(f"搜索接口未返回JSON且页面没有帖子（HTTP {statuses or 'unknown'}）")
+                return result["payload"]
             payload = _with_browser("xueqiu", fetch_in_session)
             return _xueqiu_rows(payload, limit), ""
         except Exception as error:

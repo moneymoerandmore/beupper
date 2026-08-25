@@ -73,7 +73,7 @@ COMPANY_EARNINGS_PRIORITY = """
 """
 
 COMMUNITY_DISCUSSION_STYLE = """
-当创作底稿含雪球、X/Twitter、Reddit、微博等公开社区证据时，必须让社区内容承担叙事功能，而不是只报“有多少条讨论”。从可见样本中提炼普通投资者最直接的困惑、当前最流行的解释、最有价值的反方质疑，以及财报或价格变化前后的情绪转折；自然放进开头问题、认知冲突或反方段落。可以说“从目前能检索到的公开讨论看”“雪球上争议主要集中在”“X上的讨论更在意”，但必须说明或暗含样本边界。百度WebSearch只能获得被公开索引的帖子、讨论页及媒体引用，并非平台原生完整信息流，因此禁止写“全网都在说”“市场一致认为”，禁止虚构原帖、用户名、原话、点赞量和持仓。社区材料只证明关注和分歧，财报数字、公司动作与实时价格必须由公告、交易所、行情或高可信媒体确认。
+当创作底稿含雪球、X/Twitter、Reddit、微博等公开社区证据时，社区内容必须提供“人的思考增量”，而不是替代行情源。盘前早报、收盘播报、涨跌幅、创新高/新低、公告转述等纯客观事实，即使来自社交平台，也不得以“X上有人说”为由写入正文；这些事实回到公告、交易所、行情或高可信媒体确认。只有帖子包含原因解释、预期差、估值或产业逻辑、担忧与质疑、最强反方、情绪拥挤、验证条件等内容时，才可引用。引用时要讲清此人或此类投资者“如何解释、为什么这样判断”，随后给出主播是否认同、证据边界或还缺什么验证，不能只复述帖子结论。可以说“从目前能检索到的公开讨论看”“雪球上争议主要集中在”“X上的讨论更在意”，但必须说明或暗含样本边界。禁止写“全网都在说”“市场一致认为”，禁止虚构原帖、用户名、原话、点赞量和持仓。
 """
 
 WRITER_SYSTEM += FINANCIAL_STORY_STYLE + COMPANY_EARNINGS_PRIORITY + COMMUNITY_DISCUSSION_STYLE
@@ -275,11 +275,42 @@ def generate_script(request_data):
     topic = str(request_data.get("topic", "")).strip()
     research = request_data.get("research") or []
     packaging = request_data.get("packaging") or {}
-    topic_context = request_data.get("topicContext") or {}
+    topic_context = dict(request_data.get("topicContext") or {})
     packaging_options = request_data.get("packagingOptions") or []
     workflow_context = request_data.get("workflowContext") or {}
     if not api_key or not topic or not isinstance(research, list):
         return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key、选题或研究底稿。"}
+
+    # Writing consumes the frozen research evidence only. Social retrieval is
+    # performed and persisted in the workshop's research stage.
+    interpretive_pattern = re.compile(
+        r"我认为|我觉得|在我看来|因为|原因|逻辑|解释|预期|担心|质疑|分歧|争论|风险|估值|定价|资本开支|需求|供给|周期|反映|意味着|看多|看空|但是|不过|反而|未必|除非|如果|可能|或许|为什么|bullish|bearish|because|expect|concern|thesis|valuation|priced.?in",
+        re.I,
+    )
+    frozen_social = [
+        item for item in (topic_context.get("evidence") or [])
+        if isinstance(item, dict) and item.get("social")
+        and interpretive_pattern.search(f"{item.get('title', '')} {item.get('snippet', '')}")
+    ]
+    social_lines = []
+    for item in frozen_social[:12]:
+        platform = item.get("site") or ("雪球" if item.get("platform") == "xueqiu" else "X")
+        author = item.get("author") or "公开用户"
+        snippet = re.sub(r"\s+", " ", str(item.get("snippet") or "")).strip()[:500]
+        social_lines.append(
+            f"{platform}｜{author}｜{item.get('publishedAt') or '时间未标注'}｜{snippet}｜{item.get('url') or '无链接'}"
+        )
+    social_corpus = "\n".join(social_lines)
+    social_channels = topic_context.get("socialEvidence") or {}
+
+    def community_usage_problems(script):
+        if not frozen_social:
+            return []
+        platform_reference = r"雪球|X上|X的|公开讨论|社区讨论|投资者.{0,8}(争论|分歧|讨论)"
+        human_reasoning = r"认为|解释|原因|逻辑|预期|担心|质疑|分歧|争论|风险|估值|定价|未必|反方|看多|看空|拥挤"
+        if re.search(rf"(?:{platform_reference}).{{0,180}}(?:{human_reasoning})|(?:{human_reasoning}).{{0,180}}(?:{platform_reference})", script, re.I | re.S):
+            return []
+        return ["研究底稿含有观点型社区证据，但正文只提平台或复述客观事实，没有呈现人的原因解释、预期、质疑或反方"]
 
     evidence = "\n\n".join(
         f"{item.get('key', '证据')}｜{item.get('title', '')}\n{item.get('body', '')}"
@@ -305,6 +336,11 @@ def generate_script(request_data):
         "这里包含事件摘要、触发因素、时间新鲜度、市场范围、热度和账号匹配评分、硬门结果、来源数量、社交信号以及证据标题/站点/链接。"
         "评分只用于判断选题重要性，不能当作对观众宣读的市场事实；证据链接和标题用于约束事实，不要在正文堆网址。\n"
         f"{raw_event_context}\n\n"
+        "【研究底稿冻结的社区讨论样本】\n"
+        "以下内容是研究阶段已经保存进当前项目、且通过观点增量门槛的雪球和X公开帖子。写稿阶段不得另行搜索或替换证据。"
+        "若本区非空，正文必须至少自然使用一处人的原因解释、预期、质疑或反方，并明确平台或样本边界；不能只报讨论数量，不能复述客观行情冒充社区洞察，也不能把帖子观点当成事实。\n"
+        f"{social_corpus or '本次没有取得可用的原生社区帖子，禁止虚构雪球或X观点。'}\n"
+        f"渠道诊断：{json.dumps(social_channels, ensure_ascii=False)}\n\n"
         "【允许引用具体数字的近期事实账本】\n"
         "只有下面逐字出现的报价、涨跌幅、日期、基点和历史极值才可进入正文。事实账本为空时，禁止自行补充任何行情数字。\n"
         f"{fresh_fact_corpus or '空：当前没有包含正文摘要与可信发布时间的近期原始证据。'}\n"
@@ -335,7 +371,7 @@ def generate_script(request_data):
         draft = completion(client, model, WRITER_SYSTEM, brief, receipts)
         final_script = completion(client, model, REVIEWER_SYSTEM, f"{brief}\n\n主笔草稿：\n{draft}", receipts)
         final_script = normalize_oral_paragraphs(extract_script(final_script))
-        problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context)
+        problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context) + community_usage_problems(final_script)
         stages = ["主笔创作", "独立终审重写"]
         repair_round = 0
         while problems and repair_round < 2:
@@ -349,7 +385,7 @@ def generate_script(request_data):
             )
             final_script = normalize_oral_paragraphs(extract_script(repaired))
             stages.append(f"强制成稿{repair_round}")
-            problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context)
+            problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context) + community_usage_problems(final_script)
         if problems:
             return {
                 "ok": False,

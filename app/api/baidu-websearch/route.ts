@@ -137,6 +137,7 @@ async function search(apiKey: string, query: string, topK = 10) {
   for (const headerName of headerNames) {
     const response = await fetch("https://qianfan.baidubce.com/v2/ai_search/web_search", {
       method: "POST", headers: { [headerName]: `Bearer ${cleanKey}`, "Content-Type": "application/json" }, body,
+      signal: AbortSignal.timeout(25_000),
     });
     const text = await response.text();
     let payload: any = {};
@@ -210,19 +211,26 @@ export async function POST(request: Request) {
       authoritative: authorityPattern.test(referenceText(item)),
       social: socialPattern.test(referenceText(item)),
     }));
-    const corporateFollowUp = await deriveCorporateReleaseFollowUpQueries(deepseekApiKey, firstPassSemantic);
-    const followUp = await deriveMarketFollowUpQueries(deepseekApiKey, firstPassSemantic);
+    const [corporateFollowUp, followUp] = await Promise.all([
+      deriveCorporateReleaseFollowUpQueries(deepseekApiKey, firstPassSemantic),
+      deriveMarketFollowUpQueries(deepseekApiKey, firstPassSemantic),
+    ]);
     const allFollowUpQueries = [...new Set([...corporateFollowUp.queries, ...followUp.queries])];
     for (const query of allFollowUpQueries.filter((item) => !baseQueries.includes(item))) {
       const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
     }
-    let socialChannels: any = { xueqiu: { ok: false, count: 0, error: xueqiuCookie ? "未执行" : "未配置" }, twitter: { ok: false, count: 0, error: twitterAuthToken && twitterCt0 ? "未执行" : "未配置" } };
-    const socialQueries = allFollowUpQueries.filter((item) => /雪球|twitter|x\/twitter|投资者讨论|分歧|热议/i.test(item)).slice(0, 8);
-    if (socialQueries.length && (xueqiuCookie || (twitterAuthToken && twitterCt0))) {
+    let socialChannels: any = { xueqiu: { ok: false, count: 0, error: "未执行" }, twitter: { ok: false, count: 0, error: "未执行" } };
+    // The scan only samples discussion for discovery/heat. The selected event
+    // receives a full, frozen social-evidence refresh in the research stage.
+    const socialQueries = allFollowUpQueries.filter((item) => /雪球|twitter|x\/twitter|投资者讨论|分歧|热议/i.test(item)).slice(0, 3);
+    // Browser sessions live in the local gateway. Manual credentials are only
+    // a backward-compatible fallback and must not gate social recall.
+    if (socialQueries.length) {
       try {
         const socialResponse = await fetch("http://127.0.0.1:4318/api/social-search", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ queries: socialQueries, xueqiuCookie, twitterAuthToken, twitterCt0 }),
+          signal: AbortSignal.timeout(60_000),
         });
         const socialPayload: any = await socialResponse.json();
         if (socialResponse.ok && socialPayload.ok) {
@@ -390,6 +398,10 @@ export async function POST(request: Request) {
       requestIds: batches.map((batch) => batch.requestId),
     });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "热点扫描失败。" }, { status: 502 });
+    const message = error instanceof Error ? error.message : "热点扫描失败。";
+    const timedOut = /timeout|timed out|abort/i.test(message) || (error instanceof Error && error.name === "TimeoutError");
+    return Response.json({
+      error: timedOut ? "热点扫描的外部数据源超过阶段时限，本轮已停止，避免页面无限等待。请稍后重试；已保存的上一次扫描不会被覆盖。" : message,
+    }, { status: timedOut ? 504 : 502 });
   }
 }
