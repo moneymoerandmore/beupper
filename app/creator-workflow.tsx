@@ -721,7 +721,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     });
     const payload = await readJsonResponse(response, "封面素材搜索");
     if (!response.ok) throw new Error(payload.error || "主题素材搜索失败");
-    const imageResponse = await fetch(apiUrl(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}`));
+    const imageResponse = await fetch(apiUrl(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}&pageUrl=${encodeURIComponent(payload.selected.pageUrl || "")}`));
     if (!imageResponse.ok) throw new Error("已选主题素材无法下载，未继续生成封面。");
     const blob = await imageResponse.blob();
     const referenceImage = await normalizeCoverReference(blob);

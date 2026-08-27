@@ -33,12 +33,24 @@ function imageCandidates(references: any[]) {
       searchRank: referenceIndex,
     };
     const candidates: any[] = [];
-    if (reference.image?.url) candidates.push({ ...base, imageUrl: reference.image.url, width: Number(reference.image.width) || 0, height: Number(reference.image.height) || 0 });
+    const append = (image: any, fallbackUrl = "") => {
+      const imageUrl = typeof image === "string" ? image : image?.url || image?.image_url || image?.imageUrl || image?.src || fallbackUrl;
+      if (!imageUrl) return;
+      candidates.push({ ...base, imageUrl, imageLabel: typeof image === "string" ? "" : image?.title || image?.alt || image?.description || "", width: Number(image?.width) || 0, height: Number(image?.height) || 0 });
+    };
+    append(reference.image);
+    append(reference.image_url || reference.imageUrl);
+    if (/image/i.test(String(reference.resource_type || reference.type || ""))) append(reference.url);
     for (const image of reference.web_extensions?.images || []) {
-      if (image?.url) candidates.push({ ...base, imageUrl: image.url, width: Number(image.width) || 0, height: Number(image.height) || 0 });
+      append(image);
     }
+    append(reference.web_extensions?.image || reference.web_extensions?.image_url);
     return candidates;
   });
+}
+
+function isLikelyPersonImage(candidate: any) {
+  return likelyPersonMaterial.test(`${candidate.imageLabel || ""} ${candidate.title || ""} ${candidate.imageUrl || ""}`);
 }
 
 function scoreCandidate(candidate: any, queryTokens: string[], allowPerson: boolean) {
@@ -53,7 +65,7 @@ function scoreCandidate(candidate: any, queryTokens: string[], allowPerson: bool
     + (ratio >= 1.15 && ratio <= 2.2 ? 10 : 0)
     + Math.max(0, 16 - Number(candidate.searchRank || 0))
     - (lowQuality.test(`${candidate.title} ${candidate.imageUrl} ${candidate.site}`) ? 30 : 0)
-    - (!allowPerson && likelyPersonMaterial.test(`${candidate.title} ${candidate.context} ${candidate.imageUrl}`) ? 120 : 0)
+    - (!allowPerson && isLikelyPersonImage(candidate) ? 120 : 0)
     - (/\.gif(?:\?|$)/i.test(candidate.imageUrl) ? 40 : 0);
 }
 
@@ -83,7 +95,8 @@ async function downloadable(candidate: any) {
     if (!["http:", "https:"].includes(target.protocol) || unsafeHost(target.hostname)) return false;
     const response = await fetch(target.toString(), {
       method: "GET", redirect: "follow",
-      headers: { Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8" },
+      headers: { Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", ...(candidate.pageUrl ? { Referer: candidate.pageUrl } : {}) },
+      signal: AbortSignal.timeout(12_000),
     });
     const type = response.headers.get("content-type") || "";
     if (response.url && unsafeHost(new URL(response.url).hostname)) return false;
@@ -103,20 +116,25 @@ export async function POST(request: Request) {
   try {
     const { apiKey, topic, title = "", visual = "", allowPerson = false, namedPerson = "" } = await request.json();
     if (!topic) return Response.json({ error: "缺少当前封面主题。" }, { status: 400 });
-    const query = `${String(topic).slice(0, 30)} ${allowPerson && namedPerson ? String(namedPerson).slice(0, 24) : "非人物 场景 实物"} 高清 新闻图片`;
+    const subjectHint = allowPerson && namedPerson ? String(namedPerson).slice(0, 24) : String(visual || "市场现场 公司产品 产业场景").replace(/人物|人像|肖像|头像|小人|模型/g, "").slice(0, 42);
+    const query = `${String(topic).slice(0, 34)} ${subjectHint} 高清 新闻图片`;
     const result = await searchableImages(apiKey, query);
     const queryTokens = tokens(`${topic} ${title} ${visual}`).slice(0, 36);
-    const unique = [...new Map(imageCandidates(result.references).map((item) => [item.imageUrl, item])).values()]
+    const rawCandidates = imageCandidates(result.references);
+    const personRejected = rawCandidates.filter((item: any) => !allowPerson && isLikelyPersonImage(item)).length;
+    const unique = [...new Map(rawCandidates.map((item) => [item.imageUrl, item])).values()]
       .map((item: any) => ({ ...item, score: scoreCandidate(item, queryTokens, Boolean(allowPerson)) }))
-      .filter((item: any) => Boolean(allowPerson) || !likelyPersonMaterial.test(`${item.title} ${item.context} ${item.imageUrl}`))
+      .filter((item: any) => Boolean(allowPerson) || !isLikelyPersonImage(item))
       .filter((item: any) => item.score > -10)
       .sort((a: any, b: any) => b.score - a.score);
     let selected: any = null;
-    for (const candidate of unique.slice(0, 8)) {
+    let attempted = 0;
+    for (const candidate of unique.slice(0, 24)) {
+      attempted += 1;
       if (await downloadable(candidate)) { selected = candidate; break; }
     }
-    if (!selected) return Response.json({ error: "没有找到可验证、可下载的高相关主题素材。" }, { status: 404 });
-    return Response.json({ ok: true, query, requestId: result.requestId, selected, candidateCount: unique.length });
+    if (!selected) return Response.json({ error: rawCandidates.length === 0 ? "百度本次没有返回任何图片素材，请稍后重试。" : unique.length === 0 ? "图片结果存在，但都未通过主题相关性或人物素材规则。" : `找到${unique.length}张相关候选图，但前${attempted}张均无法从来源站下载。`, diagnostics: { referenceCount: result.references.length, rawImageCount: rawCandidates.length, personRejected, eligibleCount: unique.length, attempted } }, { status: 404 });
+    return Response.json({ ok: true, query, requestId: result.requestId, selected, candidateCount: unique.length, diagnostics: { referenceCount: result.references.length, rawImageCount: rawCandidates.length, personRejected, attempted } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "主题素材搜索失败。" }, { status: 502 });
   }

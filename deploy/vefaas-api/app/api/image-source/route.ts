@@ -11,7 +11,8 @@ export async function GET(request: Request) {
     if (!source) return new Response("Missing image URL", { status: 400 });
     const target = new URL(source);
     if (!["http:", "https:"].includes(target.protocol) || unsafeHost(target.hostname)) return new Response("Unsupported image URL", { status: 400 });
-    const response = await fetch(target.toString(), { redirect: "follow", headers: { Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8" } });
+    const pageUrl = new URL(request.url).searchParams.get("pageUrl") || "";
+    const response = await fetch(target.toString(), { redirect: "follow", headers: { Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", ...(pageUrl ? { Referer: pageUrl } : {}) }, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) return new Response(`Image download failed (${response.status})`, { status: 502 });
     if (response.url && unsafeHost(new URL(response.url).hostname)) return new Response("Unsafe image redirect", { status: 400 });
     const declaredLength = Number(response.headers.get("content-length") || 0);
