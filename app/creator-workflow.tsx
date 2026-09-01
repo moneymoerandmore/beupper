@@ -368,6 +368,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [scriptGenerating, setScriptGenerating] = useState(false);
   const [scriptWaitSeconds, setScriptWaitSeconds] = useState(0);
   const [scriptError, setScriptError] = useState("");
+  const [scriptWarning, setScriptWarning] = useState("");
   const [scriptProvenance, setScriptProvenance] = useState<any>(null);
   const [socialRefreshing, setSocialRefreshing] = useState(false);
   const [socialRefreshError, setSocialRefreshError] = useState("");
@@ -380,6 +381,12 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [coverMaterial, setCoverMaterial] = useState<any>(null);
   const [coverGenerating, setCoverGenerating] = useState(false);
   const [coverError, setCoverError] = useState("");
+  const [huashengStatus, setHuashengStatus] = useState<any>(null);
+  const [huashengTask, setHuashengTask] = useState<any>(null);
+  const [huashengMode, setHuashengMode] = useState("auto");
+  const [huashengAspect, setHuashengAspect] = useState("9:16");
+  const [huashengLoading, setHuashengLoading] = useState(false);
+  const [huashengError, setHuashengError] = useState("");
   const [videoLink, setVideoLink] = useState("");
   const [metricResult, setMetricResult] = useState<any>(null);
   const [metricLoading, setMetricLoading] = useState(false);
@@ -433,6 +440,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setCoverMaterial(null);
       setCoverPrompt("");
       setCoverError("");
+      setHuashengTask(null);
+      setHuashengError("");
       setArchived(false);
       setVideoLink("");
       setMetricResult(null);
@@ -467,6 +476,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       setCoverPrompt(saved.coverPrompt || "");
       setCoverImages(saved.coverImages || {});
       setCoverMaterial(saved.coverMaterial || null);
+      setHuashengTask(saved.huashengTask || null);
+      setHuashengMode(saved.huashengMode || "auto");
+      setHuashengAspect(saved.huashengAspect || "9:16");
       const savedModel = window.localStorage.getItem("financial-titan-poe-model");
       setPoeModel(!savedModel || ["image2", "nano-banana-2", "gpt-image-2"].includes(savedModel.toLowerCase()) ? "gpt-image-2" : savedModel);
       const savedScriptModel = window.localStorage.getItem("financial-titan-script-model") || "";
@@ -479,7 +491,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   useEffect(() => {
     if (!hydrated || !projectId) return;
     window.localStorage.setItem("financial-titan-workflow", JSON.stringify({
-      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial,
+      methodologyVersion, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial, huashengTask, huashengMode, huashengAspect,
     }));
     const projects = JSON.parse(window.localStorage.getItem("financial-titan-projects") || "[]");
     const record = {
@@ -490,12 +502,12 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived,
       research: currentResearch,
       packaging: currentPackages[packageIndex],
-      coverPrompt, coverImages, coverMaterial,
+      coverPrompt, coverImages, coverMaterial, huashengTask, huashengMode, huashengAspect,
     };
     const index = projects.findIndex((item: any) => item.id === projectId);
     if (index >= 0) projects[index] = record; else projects.unshift(record);
     window.localStorage.setItem("financial-titan-projects", JSON.stringify(projects));
-  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial]);
+  }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial, huashengTask, huashengMode, huashengAspect]);
 
   useEffect(() => {
     if (poeApiKey) window.localStorage.setItem("financial-titan-poe-key", poeApiKey);
@@ -544,7 +556,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     { label: "段落形成自然留存节奏", ok: script.split(/\n\s*\n/).filter(Boolean).length >= 6 },
     { label: "避免连续套路式设问", ok: (script.match(/？/g) || []).length <= 3 },
     { label: "结尾有自然互动问题", ok: /你(?:更|会|怎么看|认为|在意)|你们(?:更|怎么看|认为)|评论区|留言/.test(script.replace(/\s/g, "").slice(-420)) },
-    { label: "结尾直接引导点赞和关注", ok: /点赞/.test(script.replace(/\s/g, "").slice(-420)) && /关注(?:金融巨子|我|这个账号|一下)/.test(script.replace(/\s/g, "").slice(-420)) },
+    { label: "结尾直接引导点赞和关注", ok: /点赞/.test(script.replace(/\s/g, "").slice(-420)) && /(?:关注.{0,10}(?:金融巨子|账号|我)|(?:金融巨子|这个账号).{0,8}关注|点个关注|记得关注)/.test(script.replace(/\s/g, "").slice(-420)) },
     { label: "结尾说明关注价值并自然承接下期", ok: /关注/.test(script.replace(/\s/g, "").slice(-420)) && /下一篇|下一期|下期|下回|继续(?:聊|拆|跟踪|看)/.test(script.replace(/\s/g, "").slice(-420)) },
   ];
   const oralWarningCount = oralChecks.filter((item) => !item.ok).length;
@@ -671,6 +683,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     }
     setScriptGenerating(true);
     setScriptError("");
+    setScriptWarning("");
     setScriptProvenance(null);
     try {
       const response = await fetch(apiUrl("/api/generate-script"), {
@@ -702,7 +715,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       }
       setScript(payload.script);
       setScriptProvenance(payload.provenance);
-      if (payload.warning) setScriptError(payload.warning);
+      if (payload.warning) setScriptWarning(payload.warning);
       notify(`${payload.model} 已完成主笔创作和独立终审`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "大模型写稿失败";
@@ -710,11 +723,6 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     } finally {
       setScriptGenerating(false);
     }
-  }
-
-  async function copyScript() {
-    await navigator.clipboard.writeText(script);
-    notify("纯口播稿已复制，可直接粘贴到花生AI");
   }
 
   async function selectCoverMaterial() {
@@ -817,6 +825,92 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     }
   }
 
+  async function refreshHuashengStatus(silent = false) {
+    if (!silent) {
+      setHuashengLoading(true);
+      setHuashengError("");
+    }
+    try {
+      const response = await fetch(apiUrl("/api/huasheng/status"));
+      const payload = await readJsonResponse(response, "花生登录检测");
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "花生状态检测失败");
+      setHuashengStatus(payload);
+    } catch (error) {
+      if (!silent) setHuashengError(error instanceof Error ? error.message : "花生状态检测失败");
+    } finally {
+      if (!silent) setHuashengLoading(false);
+    }
+  }
+
+  async function loginHuasheng() {
+    setHuashengLoading(true);
+    setHuashengError("");
+    try {
+      const response = await fetch(apiUrl("/api/huasheng/login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const payload = await readJsonResponse(response, "花生登录");
+      if (!response.ok || !payload.ok) throw new Error(typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error));
+      if (!payload.authUrl) throw new Error("花生 CLI 没有返回授权地址，请重新点击登录。");
+      notify(payload.message || "已打开花生授权页");
+      window.setTimeout(() => void refreshHuashengStatus(), 4000);
+    } catch (error) {
+      setHuashengError(error instanceof Error ? error.message : "无法打开花生登录");
+    } finally {
+      setHuashengLoading(false);
+    }
+  }
+
+  async function makeHuashengVideo() {
+    if (!script.trim()) { setHuashengError("当前项目还没有可用口播稿。"); return; }
+    const confirmed = window.confirm("花生确认分镜后会真实扣除积分，并把当前口播稿上传到花生用于成片。确认现在开始吗？");
+    if (!confirmed) return;
+    setHuashengLoading(true);
+    setHuashengError("");
+    try {
+      const response = await fetch(apiUrl("/api/huasheng/make"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, script, mode: huashengMode, aspect: huashengAspect, confirmedCharge: true }),
+      });
+      const payload = await readJsonResponse(response, "花生成片");
+      if (!response.ok || !payload.ok) throw new Error(typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error));
+      setHuashengTask(payload.task);
+      notify("花生成片任务已提交，页面会自动跟踪进度");
+    } catch (error) {
+      setHuashengError(error instanceof Error ? error.message : "花生成片提交失败");
+    } finally {
+      setHuashengLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (step !== 4) return;
+    void refreshHuashengStatus();
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== 4 || !huashengStatus?.installed || huashengStatus?.authenticated) return;
+    const timer = window.setInterval(() => void refreshHuashengStatus(true), 4000);
+    return () => window.clearInterval(timer);
+  }, [step, huashengStatus?.installed, huashengStatus?.authenticated]);
+
+  useEffect(() => {
+    const taskId = huashengTask?.taskId;
+    if (!taskId || !["queued", "running"].includes(huashengTask.status)) return;
+    const poll = async () => {
+      try {
+        const response = await fetch(apiUrl(`/api/huasheng/task?id=${encodeURIComponent(taskId)}`));
+        const payload = await readJsonResponse(response, "花生任务状态");
+        if (response.ok && payload.ok) setHuashengTask(payload.task);
+        else setHuashengError(payload.error || "花生任务状态读取失败");
+      } catch (error) {
+        setHuashengError(error instanceof Error ? error.message : "花生任务状态读取失败");
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 5000);
+    void poll();
+    return () => window.clearInterval(timer);
+  }, [huashengTask?.taskId, huashengTask?.status]);
+
   function archive() {
     const existing = JSON.parse(window.localStorage.getItem("financial-titan-content-assets") || "[]");
     const asset = {
@@ -829,7 +923,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
       research: currentResearch,
       coverPrompt,
       coverImages,
-      status: "pending-production",
+      huashengTask,
+      videoFile: huashengTask?.status === "ready" ? huashengTask.downloadUrl : "",
+      status: huashengTask?.status === "ready" ? "produced" : "pending-production",
       metrics: {},
     };
     const index = existing.findIndex((item: any) => item.id === projectId);
@@ -966,6 +1062,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
             <button className="primary" disabled={scriptGenerating || !deepseekApiKey.trim()} onClick={generateScript}>{scriptGenerating ? `模型处理中 · ${scriptWaitSeconds}秒` : script ? "用大模型重新创作" : "用大模型生成口播稿"}</button>
           </div>
           {scriptError && <p className="coverError">{scriptError}</p>}
+          {scriptWarning && <p className="keyNotice">⚠ {scriptWarning}</p>}
           {scriptProvenance ? (
             <p className="keyNotice">已核验 DeepSeek API 调用：{scriptProvenance.callCount} 次 · 实际模型 {scriptProvenance.receipts?.[0]?.actualModel || scriptModel} · 回执 {scriptProvenance.receipts?.map((item: any) => item.responseId).join("、")}</p>
           ) : script ? (
@@ -987,14 +1084,27 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
 
       {step === 4 && (
         <section className="studioPanel productionPanel">
-          <div className="productionHero"><div className="peanutLarge">花生 <b>AI</b></div><h2>文稿已准备，可以成片</h2><p>先复制纯口播稿，再打开花生AI粘贴。生成9:16与16:9两套母版，成片后回到这里登记。</p></div>
+          <div className="productionHero"><div className="peanutLarge">花生 <b>CLI</b></div><h2>文稿已准备，直接成片</h2><p>当前口播稿会由本地 huasheng-cli 直接提交、等待渲染并下载成片，不再复制文案或跳转花生网页。只有首次登录需要打开官方授权页。</p></div>
           <div className="productionChecklist">
-            <span>① 复制口播稿</span><span>② 打开花生AI</span><span>③ 生成双画幅</span><span>④ 人工检查数字与素材</span>
+            <span>① 检测本机登录</span><span>② 选择成片模式</span><span>③ 明确确认积分</span><span>④ 自动下载成片</span>
+          </div>
+          <div className="huashengCliCard">
+            <div className="huashengCliStatus">
+              <i className={huashengStatus?.authenticated ? "ready" : "pending"}>{huashengStatus?.authenticated ? "✓" : "!"}</i>
+              <div><b>{huashengStatus?.authenticated ? "花生账号已连接" : huashengStatus?.installed === false ? "尚未安装 huasheng-cli" : "等待花生登录"}</b><span>{huashengStatus?.authenticated ? "本机凭据有效，可以直接提交成片。" : "登录发生在花生官方授权页，账号密码不会进入本项目。"}</span></div>
+              <button className="ghost" disabled={huashengLoading} onClick={huashengStatus?.authenticated ? () => void refreshHuashengStatus() : loginHuasheng}>{huashengStatus?.authenticated ? "重新检测" : "用 Chrome 授权"}</button>
+            </div>
+            <div className="huashengCliControls">
+              <label>成片方式<select value={huashengMode} onChange={(event) => setHuashengMode(event.target.value)}><option value="auto">智能选择（推荐）</option><option value="clip">实拍素材剪辑</option><option value="mg">MG 动效</option></select></label>
+              <label>视频画幅<select value={huashengAspect} onChange={(event) => setHuashengAspect(event.target.value)}><option value="9:16">9:16 竖版</option><option value="16:9">16:9 横版</option></select></label>
+              <button className="primary" disabled={huashengLoading || !huashengStatus?.authenticated || ["queued", "running"].includes(huashengTask?.status)} onClick={makeHuashengVideo}>{["queued", "running"].includes(huashengTask?.status) ? "花生正在成片…" : "确认积分并开始成片"}</button>
+            </div>
+            {huashengTask && <div className={`huashengTask ${huashengTask.status}`}><b>{huashengTask.status === "ready" ? "成片已完成" : huashengTask.status === "failed" ? "成片失败" : "任务处理中"}</b><span>{huashengTask.status === "ready" ? "视频已经下载到本地资产目录。" : huashengTask.status === "failed" ? String(huashengTask.error || "花生未返回具体原因") : "页面每5秒读取一次任务状态，可以停留在本页等待。"}</span>{huashengTask.downloadUrl && <a href={huashengTask.downloadUrl} download>下载 MP4</a>}</div>}
+            {huashengError && <p className="coverError">{huashengError}</p>}
+            <p className="coverQaNotice">确认分镜会真实扣除花生积分且不可撤销；系统只在你点击确认后传入 <b>--yes</b>。本功能只生成并下载文件，不会自动公开发布到任何平台。</p>
           </div>
           <div className="studioActions center">
-            <button className="ghost" onClick={copyScript}>复制口播稿</button>
-            <button className="primary" onClick={() => window.open("https://www.huasheng.cn/", "_blank", "noopener,noreferrer")}>打开花生AI →</button>
-            <button className="ghost" onClick={() => { archive(); setStep(5); }}>成片完成并存档</button>
+            <button className="ghost" disabled={huashengTask?.status !== "ready"} onClick={() => { archive(); setStep(5); }}>成片完成并存档</button>
           </div>
         </section>
       )}

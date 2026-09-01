@@ -123,6 +123,18 @@ def normalize_oral_paragraphs(text, target=190, hard_limit=230):
     return "\n\n".join(normalized)
 
 
+def ensure_closing_cta(text):
+    """Fill the literal CTA locally instead of paying for or rejecting a rewrite."""
+    clean = text.strip()
+    ending = re.sub(r"\s+", "", clean)[-420:]
+    has_like = "点赞" in ending
+    has_follow = bool(re.search(r"(?:关注.{0,10}(?:金融巨子|账号|我)|(?:金融巨子|这个账号).{0,8}关注|点个关注|记得关注)", ending))
+    has_continuation = bool(re.search(r"下一篇|下一期|下期|下回|继续(?:聊|拆|跟踪|看)", ending))
+    if has_like and has_follow and has_continuation:
+        return clean
+    return clean + "\n\n如果这期分析对你有帮助，记得点赞、关注金融巨子，咱们下期继续聊最新的市场变化。"
+
+
 def delivery_problems(text):
     compact_length = len(re.sub(r"\s+", "", text))
     problems = []
@@ -163,7 +175,7 @@ def delivery_problems(text):
         problems.append("结尾没有承接本期真实分歧的观众互动问题")
     if "点赞" not in ending:
         problems.append("结尾没有直接请观众点赞")
-    if not re.search(r"关注(?:金融巨子|我|这个账号|一下)", ending):
+    if not re.search(r"(?:关注.{0,10}(?:金融巨子|账号|我)|(?:金融巨子|这个账号).{0,8}关注|点个关注|记得关注)", ending):
         problems.append("结尾没有直接请观众关注并说明继续跟踪的理由")
     if not re.search(r"下一篇|下一期|下期|下回|继续(?:聊|拆|跟踪|看)", ending):
         problems.append("结尾没有用泛化表达承接持续更新")
@@ -334,33 +346,15 @@ def generate_script(request_data):
         )
         draft = completion(client, model, WRITER_SYSTEM, brief, receipts)
         final_script = completion(client, model, REVIEWER_SYSTEM, f"{brief}\n\n主笔草稿：\n{draft}", receipts)
-        final_script = normalize_oral_paragraphs(extract_script(final_script))
+        final_script = ensure_closing_cta(normalize_oral_paragraphs(extract_script(final_script)))
         problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context)
         stages = ["主笔创作", "独立终审重写"]
-        repair_round = 0
-        while problems and repair_round < 2:
-            repair_round += 1
-            repaired = completion(
-                client,
-                model,
-                FINALIZER_SYSTEM,
-                f"{brief}\n\n这是第{repair_round}轮成稿修复。当前文本未通过的具体原因：{'；'.join(problems)}。必须逐项修复；找不到近期原始证据的数字必须删除，不能猜测、换一个数字或返回修改建议。\n\n待彻底改写的中间产物：\n{final_script}",
-                receipts,
-            )
-            final_script = normalize_oral_paragraphs(extract_script(repaired))
-            stages.append(f"强制成稿{repair_round}")
-            problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context)
-        if problems:
-            return {
-                "ok": False,
-                "status": 422,
-                "error": f"模型返回的仍是中间产物，已拒绝写入稿件框：{'；'.join(problems)}。旧稿未被覆盖，请重新生成。",
-            }
         return {
             "ok": True,
             "script": final_script,
             "model": model,
-            "warning": "",
+            "warning": f"编辑提醒（不阻止使用）：{'；'.join(problems)}" if problems else "",
+            "warnings": problems,
             "stages": stages,
             "provenance": {
                 "provider": "DeepSeek API",

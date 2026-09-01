@@ -205,6 +205,7 @@
 .mobileLibrary .assetPublication a { overflow-wrap:anywhere; }
 .mobileLibrary .publicationActions { align-items:flex-start; flex-direction:column; gap:9px; }
 .mobileLibrary pre { white-space:pre-wrap; word-break:break-word; font-family:inherit; font-size:13px; line-height:1.75; }
+.mobileWorkarea .productionPanel{padding:24px 16px}.mobileWorkarea .productionChecklist{display:grid;grid-template-columns:1fr 1fr}.mobileWorkarea .huashengCliStatus,.mobileWorkarea .huashengCliControls{grid-template-columns:1fr}.mobileWorkarea .huashengCliStatus>i{display:none}.mobileWorkarea .huashengCliStatus button,.mobileWorkarea .huashengCliControls button{width:100%;min-height:48px}.mobileWorkarea .huashengTask{grid-template-columns:1fr}.mobileWorkarea .huashengTask a{grid-column:1;grid-row:auto;margin-top:7px}
 
 @media (min-width:821px) {
   .mobileApp { max-width:430px; margin:24px auto; min-height:calc(100vh - 48px); border:1px solid #2b303b; border-radius:28px; overflow:hidden; box-shadow:0 30px 100px #0008; }

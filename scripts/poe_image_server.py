@@ -2,6 +2,7 @@ import json
 import mimetypes
 import os
 import sys
+from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from poe_image import generate
 from poe_script import generate_script
 from deepseek_packaging import generate_packaging
 from social_sources import collect_social_sources, open_social_login, social_login_status
+from huasheng_cli import VIDEO_DIR, auth_status as huasheng_auth_status, start_login as huasheng_start_login, start_make as huasheng_start_make, task_status as huasheng_task_status
 
 
 HOST = os.environ.get("HOST", "127.0.0.1")
@@ -36,8 +38,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(204, {})
 
     def do_GET(self):
-        if self.path == "/health":
-            self.send_json(200, {"ok": True, "service": "local-ai-gateway", "writing": "deepseek", "images": "poe"})
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
+            self.send_json(200, {"ok": True, "service": "local-ai-gateway", "writing": "deepseek", "images": "poe", "video": "huasheng-cli"})
+        elif parsed.path == "/api/huasheng/status":
+            self.send_json(200, huasheng_auth_status())
+        elif parsed.path == "/api/huasheng/task":
+            result = huasheng_task_status(parse_qs(parsed.query).get("id", [""])[0])
+            self.send_json(200 if result.get("ok") else int(result.get("status", 404)), result)
+        elif parsed.path.startswith("/huasheng-files/"):
+            filename = parsed.path.removeprefix("/huasheng-files/")
+            target = (VIDEO_DIR / filename).resolve()
+            if target.parent != VIDEO_DIR.resolve() or not target.is_file():
+                self.send_json(404, {"error": "Video not found"})
+                return
+            content = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Disposition", f'attachment; filename="{target.name}"')
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(content)
         elif self.path.startswith("/covers/"):
             filename = self.path.split("?", 1)[0].removeprefix("/covers/")
             target = (COVER_DIR / filename).resolve()
@@ -57,13 +79,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.removeprefix("/api")
-        if route not in ("/generate", "/generate-script", "/generate-packaging", "/social-search", "/social-login"):
+        if route not in ("/generate", "/generate-script", "/generate-packaging", "/social-search", "/social-login", "/huasheng/login", "/huasheng/make"):
             self.send_json(404, {"error": "Not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request_data = json.loads(self.rfile.read(length).decode("utf-8"))
-            if route == "/social-login":
+            if route == "/huasheng/login":
+                result = huasheng_start_login()
+            elif route == "/huasheng/make":
+                result = huasheng_start_make(request_data)
+            elif route == "/social-login":
                 platform = request_data.get("platform", "")
                 result = open_social_login(platform) if request_data.get("action") == "start" else social_login_status(platform)
             elif route == "/social-search":

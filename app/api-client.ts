@@ -14,6 +14,10 @@ const aiPaths = new Set([
   "/api/generate-script",
   "/api/social-search",
   "/api/social-login",
+  "/api/huasheng/status",
+  "/api/huasheng/login",
+  "/api/huasheng/make",
+  "/api/huasheng/task",
 ]);
 
 export function apiUrl(path: string) {
