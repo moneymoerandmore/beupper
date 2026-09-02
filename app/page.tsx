@@ -6,6 +6,7 @@ import { CreatorWorkflow } from "./creator-workflow";
 import { BaiduSourcePanel } from "./baidu-source-panel";
 import { ProjectLibrary } from "./project-library";
 import MobileApp from "./mobile/mobile-app";
+import { diagnoseDouyinPerformance, douyinPerformanceBaseline, median } from "./douyin-performance-baseline";
 
 type Topic = {
   id: number;
@@ -113,6 +114,16 @@ export default function Home() {
     const rows = [...groups.values()].map((row) => ({ ...row, engagement: row.views ? ((row.likes + row.comments + row.shares + row.favorites) / row.views) * 100 : null })).sort((a, b) => b.views - a.views);
     return { rows, posts: recent.length, views: rows.reduce((sum, row) => sum + row.views, 0) };
   }, [publications]);
+  const douyinReview = useMemo(() => {
+    const mature = douyinPerformanceBaseline.filter((item) => item.views >= 40 && !item.publishedAt.startsWith("2026-09-02"));
+    const top = [...mature].sort((a, b) => b.views - a.views).slice(0, 8);
+    return {
+      count: douyinPerformanceBaseline.length,
+      medianViews: median(mature.map((item) => item.views)),
+      medianWatchSeconds: median(mature.map((item) => item.averageWatchSeconds)),
+      top,
+    };
+  }, []);
 
   useEffect(() => {
     const openTab = window.localStorage.getItem("financial-titan-open-tab");
@@ -120,6 +131,7 @@ export default function Home() {
     const stored = window.localStorage.getItem("fin-titan-selected");
     if (stored) setSelected(Number(stored));
     const loadPublications = () => setPublications(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
+    window.localStorage.setItem("financial-titan-douyin-performance-baseline", JSON.stringify(douyinPerformanceBaseline));
     loadPublications();
     window.addEventListener("financial-titan-publications-updated", loadPublications);
     setReady(true);
@@ -215,7 +227,7 @@ export default function Home() {
             <i>→</i><span><b>02</b>动态理解<small>实体·动作·对象·阶段</small></span>
             <i>→</i><span><b>03</b>事件标准化<small>行情事实与原因事件分开</small></span>
             <i>→</i><span><b>04</b>因果连接<small>时间·对象·机制·反证</small></span>
-            <i>→</i><span><b>05</b>分析排序<small>根因解释力优先</small></span>
+            <i>→</i><span><b>05</b>双轨排序<small>搜索需求 × 推荐传播</small></span>
           </div>
           <div className="ruleGrid">
             {topicEngineRules.map((item) => (
@@ -302,6 +314,28 @@ export default function Home() {
             <button className="peanutBtn" onClick={openHuasheng}>打开花生AI制作 →</button>
           </section>
         </div>
+
+        <section className="performanceReview">
+          <div className="sectionTitle compact">
+            <div><p className="eyebrow">DOUYIN REVIEW</p><h2>抖音历史复盘指标</h2></div>
+            <span className="engineVersion">已沉淀 {douyinReview.count} 条创作者后台数据</span>
+          </div>
+          <div className="reviewBenchmarks">
+            <span><small>成熟作品中位播放</small><b>{douyinReview.medianViews.toLocaleString("zh-CN")}</b></span>
+            <span><small>中位平均观看</small><b>{douyinReview.medianWatchSeconds.toFixed(1)} 秒</b></span>
+            <span><small>留存目标</small><b>平均观看 ≥ 45秒</b></span>
+            <span><small>开头目标</small><b>2秒跳出 &lt; 30%</b></span>
+            <span><small>前段目标</small><b>5秒完播 ≥ 50%</b></span>
+          </div>
+          <div className="reviewTable">
+            <div className="reviewRow reviewHead"><span>作品</span><span>播放</span><span>平均观看</span><span>2秒跳出</span><span>5秒完播</span><span>主流量</span><span>自动诊断</span></div>
+            {douyinReview.top.map((item) => {
+              const lead = Object.entries(item.trafficSources || {}).sort((a, b) => b[1] - a[1])[0];
+              return <div className="reviewRow" key={item.id}><span title={item.title}>{item.title}</span><b>{item.views.toLocaleString("zh-CN")}</b><b>{item.averageWatchSeconds.toFixed(1)}秒</b><b>{item.twoSecondBounceRate == null ? "—" : `${item.twoSecondBounceRate}%`}</b><b>{item.fiveSecondCompletionRate == null ? "—" : `${item.fiveSecondCompletionRate}%`}</b><b>{lead ? `${lead[0]} ${lead[1]}%` : "—"}</b><em>{diagnoseDouyinPerformance(item, douyinReview.medianViews, douyinReview.medianWatchSeconds)}</em></div>;
+            })}
+          </div>
+          <p className="metricDisclosure">数据来自2026-09-02已登录的抖音创作者中心；详情页没有展示的留存与来源字段保持为空，不做估算。封面点击率不再作为抖音推荐流的核心判断指标。</p>
+        </section>
 
         <section className="method">
           <div><p className="eyebrow">THE PLAYBOOK</p><h2>金融巨子 · 内容判断框架</h2></div>

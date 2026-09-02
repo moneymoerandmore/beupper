@@ -44,6 +44,11 @@ export type CausalAnalysisTopic = {
   evidenceStrength: number;
   novelty: number;
   confidence: number;
+  searchDemand: number;
+  stakeholderConflict: number;
+  entitySpecificity: number;
+  timelinessOpportunity: number;
+  discoveryLane: "search" | "recommendation" | "dual";
 };
 
 const extractionSystem = `你是全球财经新闻事件编辑。你的任务不是选题、评分或写观点，而是把搜索结果穷尽地标准化成“今天真实发生的事件全集”。
@@ -199,9 +204,11 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
 
 先识别 observed events：指数、行业、公司、债券、汇率或商品的实际价格与资金变化；再识别 causal events：政策监管、财报指引、利率流动性、产业供需、资本流向、地缘冲击等。只有满足时间顺序合理、影响对象匹配、存在清晰传导机制时才能连接。一个监管事件可能解释某个细分板块，不得擅自解释整个大盘；相关性不能写成已确认因果。
 
-优先形成“重要行情 + 具体原因 + 可验证机制”的选题。没有充分根因的重大行情保留为 unresolved；没有明显行情但影响重大的原因事件必须形成可独立成立的分析题，不能因为暂时缺少股价反应而从选题池消失。事件榜前8名必须各自出现在至少一个题目的 observedEventIds 或 causalEventIds 中；一个题可以覆盖确有因果关系的多个事件，但禁止为了完成覆盖而虚构联系。禁止给任何特定国家、汇率、行业或用户曾提及事件固定加权。
+优先形成“明确实体 + 当天新动作 + 价格或利益冲击 + 具体原因 + 可验证机制”的选题。没有充分根因的重大行情保留为 unresolved；没有明显行情但影响重大的原因事件必须形成可独立成立的分析题，不能因为暂时缺少股价反应而从选题池消失。事件榜前8名必须各自出现在至少一个题目的 observedEventIds 或 causalEventIds 中；一个题可以覆盖确有因果关系的多个事件，但禁止为了完成覆盖而虚构联系。禁止给任何特定国家、汇率、行业或用户曾提及事件固定加权。
 
-只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0}]}。所有分数0到100，最多输出18个互不重复的分析命题。`;
+同时判断两条互不替代的传播通道：search 代表用户会主动搜索准确公司、资产、公告动作或异动数字；recommendation 代表即使用户没搜索，也能立刻理解反常价格、谁获益谁承担成本的冲突；两者都强才是 dual。searchDemand必须基于证据中的当日新动作、明确搜索实体、数字冲击和讨论扩散，不得因公司知名度凭空给高分。stakeholderConflict衡量“谁在买卖、谁获益、谁承担稀释/成本/风险”是否具体；entitySpecificity衡量标题能否落到不可替换的公司、资产或政策动作；timelinessOpportunity衡量现在发布是否仍处于盘前、盘后、财报、IPO、配售、监管、停牌或剧烈异动的搜索窗口。
+
+只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0,"searchDemand":0,"stakeholderConflict":0,"entitySpecificity":0,"timelinessOpportunity":0,"discoveryLane":"search|recommendation|dual"}]}。所有分数0到100，最多输出18个互不重复的分析命题。`;
   const result = await deepSeekJson(apiKey, [
     { role: "system", content: `${system}\n公司财报、业绩预告、经营指引或资本开支更新属于公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：盈利预期发生了什么变化、估值锚如何移动、盘后或次日价格是否充分反映、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司财报改写成行业趋势。` },
     { role: "user", content: `北京时间${new Date().toISOString()}。从以下事件全集构建因果分析型选题：${JSON.stringify(compactEvents)}` },
@@ -214,6 +221,9 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
     counterEvidence: String(item.counterEvidence || "").trim(), verificationSignals: list(item.verificationSignals), markets: list(item.markets),
     marketImportance: number(item.marketImportance), explanatoryPower: number(item.explanatoryPower), evidenceStrength: number(item.evidenceStrength),
     novelty: number(item.novelty), confidence: number(item.confidence),
+    searchDemand: number(item.searchDemand), stakeholderConflict: number(item.stakeholderConflict),
+    entitySpecificity: number(item.entitySpecificity), timelinessOpportunity: number(item.timelinessOpportunity),
+    discoveryLane: ["search", "recommendation", "dual"].includes(item.discoveryLane) ? item.discoveryLane : "recommendation",
   }));
   return { topics, receipt: result.receipt };
 }
@@ -222,8 +232,9 @@ export function scoreCausalAnalysisTopic(topic: CausalAnalysisTopic, freshness =
   const causalDepth = topic.causalEventIds.length && topic.mechanism ? topic.explanatoryPower : topic.explanatoryPower * 0.45;
   const causalityFactor = topic.causality === "confirmed" ? 100 : topic.causality === "strong_hypothesis" ? 82 : topic.causality === "possible" ? 60 : 38;
   return Math.round(
-    causalDepth * 0.25 + topic.marketImportance * 0.2 + topic.evidenceStrength * 0.16 +
-    topic.novelty * 0.1 + causalityFactor * 0.09 + topic.confidence * 0.05 + freshness * 0.15,
+    causalDepth * 0.19 + topic.marketImportance * 0.15 + topic.evidenceStrength * 0.13 +
+    topic.novelty * 0.06 + causalityFactor * 0.05 + topic.confidence * 0.03 + freshness * 0.12 +
+    topic.searchDemand * 0.10 + topic.stakeholderConflict * 0.08 + topic.entitySpecificity * 0.05 + topic.timelinessOpportunity * 0.04,
   );
 }
 

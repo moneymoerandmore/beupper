@@ -3,8 +3,66 @@
 import { useEffect, useState } from "react";
 import { downloadCover, localizeCoverUrl } from "./image-download";
 import { apiUrl } from "./api-client";
+import { douyinPerformanceBaseline } from "./douyin-performance-baseline";
 
 const stepNames = ["选题确认", "研究底稿", "包装确认", "口播成稿", "花生成片", "数据回流"];
+
+function normalizeReviewTitle(value: string) {
+  return value.toLowerCase().replace(/#[^\s]+/g, "").replace(/[\s\p{P}\p{S}]/gu, "").replace(/昨夜|今天|今日|刚刚|到底|接下来|怎么看|三个信号/g, "");
+}
+
+function titleBigrams(value: string) {
+  const text = normalizeReviewTitle(value);
+  return new Set(Array.from({ length: Math.max(0, text.length - 1) }, (_, index) => text.slice(index, index + 2)));
+}
+
+function reviewSimilarity(left: string, right: string) {
+  const a = normalizeReviewTitle(left); const b = normalizeReviewTitle(right);
+  if (!a || !b) return 0;
+  if (a.includes(b) || b.includes(a)) return 1;
+  const aa = titleBigrams(a); const bb = titleBigrams(b);
+  const overlap = [...aa].filter((item) => bb.has(item)).length;
+  return (2 * overlap) / Math.max(1, aa.size + bb.size);
+}
+
+function bindReviewsByPublishingOrder(projects: any[], links: any[], manual: Record<string, string>) {
+  const reviews = [...douyinPerformanceBaseline].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+  const projectRows = projects.map((project) => {
+    const linkedTitles = links.filter((item) => item.contentId === project.id).map((item) => item.snapshot?.title).filter(Boolean);
+    return { project, titles: [project.packaging?.title, project.topic, ...linkedTitles].filter(Boolean).map(String) };
+  });
+  const rows = projectRows.length; const columns = reviews.length;
+  const dp = Array.from({ length: rows + 1 }, () => Array(columns + 1).fill(Number.NEGATIVE_INFINITY));
+  const path = Array.from({ length: rows + 1 }, () => Array(columns + 1).fill(""));
+  dp[0][0] = 0;
+  for (let i = 0; i <= rows; i += 1) for (let j = 0; j <= columns; j += 1) {
+    if (!Number.isFinite(dp[i][j])) continue;
+    if (i < rows && dp[i][j] - 1.2 > dp[i + 1][j]) { dp[i + 1][j] = dp[i][j] - 1.2; path[i + 1][j] = "project-gap"; }
+    if (j < columns && dp[i][j] - 1.2 > dp[i][j + 1]) { dp[i][j + 1] = dp[i][j] - 1.2; path[i][j + 1] = "review-gap"; }
+    if (i < rows && j < columns) {
+      const similarity = Math.max(0, ...projectRows[i].titles.map((title) => reviewSimilarity(title, reviews[j].title)));
+      const manuallyLocked = manual[projectRows[i].project.id] === reviews[j].id;
+      // 主题一致性是硬门，顺序只能在主题已经相符的候选之间消歧，绝不能把相邻但无关的项目强行配对。
+      if (manuallyLocked || similarity >= 0.16) {
+        const matchScore = dp[i][j] + 3 + similarity * 5 + (manuallyLocked ? 100 : 0);
+        if (matchScore > dp[i + 1][j + 1]) { dp[i + 1][j + 1] = matchScore; path[i + 1][j + 1] = "match"; }
+      }
+    }
+  }
+  const next: Record<string, string> = {}; let i = rows; let j = columns;
+  while (i > 0 || j > 0) {
+    const action = path[i][j];
+    if (action === "match") { next[projectRows[i - 1].project.id] = reviews[j - 1].id; i -= 1; j -= 1; }
+    else if (action === "project-gap") i -= 1;
+    else if (action === "review-gap") j -= 1;
+    else break;
+  }
+  for (const [projectId, reviewId] of Object.entries(manual)) {
+    for (const [otherProjectId, otherReviewId] of Object.entries(next)) if (otherProjectId !== projectId && otherReviewId === reviewId) delete next[otherProjectId];
+    next[projectId] = reviewId;
+  }
+  return next;
+}
 
 export function ProjectLibrary({ notify, onEditProject }: { notify: (message: string) => void; onEditProject: (projectId: string) => void }) {
   const [projects, setProjects] = useState<any[]>([]);
@@ -12,6 +70,9 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
   const [links, setLinks] = useState<any[]>([]);
   const [newLink, setNewLink] = useState("");
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
+  const [reviewBindings, setReviewBindings] = useState<Record<string, string>>({});
+  const [reviewPickerOpen, setReviewPickerOpen] = useState(false);
+  const [reviewSearch, setReviewSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +104,12 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       if (cancelled) return;
       setProjects(saved);
       setSelectedId(saved[0]?.id || "");
-      setLinks(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
+      const storedLinks = JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]");
+      const manualBindings = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
+      const completedBindings = bindReviewsByPublishingOrder(saved, storedLinks, manualBindings);
+      setLinks(storedLinks);
+      setReviewBindings(completedBindings);
+      window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(completedBindings));
     }
     void loadProjects();
     return () => { cancelled = true; };
@@ -51,6 +117,28 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
 
   const selected = projects.find((item) => item.id === selectedId);
   const selectedLinks = links.filter((item) => item.contentId === selectedId);
+  const autoMatchedDouyinReview = selected ? douyinPerformanceBaseline.find((item) => {
+    const normalize = (value: string) => value.toLowerCase().replace(/[#：:，,？?！!\s]/g, "");
+    const projectTitle = normalize(selected.packaging?.title || selected.topic || "");
+    const performanceTitle = normalize(item.title);
+    return projectTitle.length >= 8 && (performanceTitle.includes(projectTitle.slice(0, 18)) || projectTitle.includes(performanceTitle.slice(0, 18)));
+  }) : undefined;
+  const matchedDouyinReview = selected
+    ? douyinPerformanceBaseline.find((item) => item.id === reviewBindings[selected.id]) || autoMatchedDouyinReview
+    : undefined;
+  const filteredDouyinReviews = douyinPerformanceBaseline.filter((item) => !reviewSearch.trim() || item.title.toLowerCase().includes(reviewSearch.trim().toLowerCase()));
+
+  function bindDouyinReview(reviewId: string) {
+    if (!selected) return;
+    const next = { ...reviewBindings, [selected.id]: reviewId };
+    setReviewBindings(next);
+    window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(next));
+    const manual = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
+    window.localStorage.setItem("financial-titan-douyin-review-manual-bindings", JSON.stringify({ ...manual, [selected.id]: reviewId }));
+    setReviewPickerOpen(false);
+    setReviewSearch("");
+    notify("抖音后台复盘数据已绑定到当前资产");
+  }
 
   function saveLinks(next: any[]) {
     setLinks(next);
@@ -172,6 +260,14 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
           <article className="outputBlock"><h3>标题、Hook 与封面方案</h3><dl className="savedPackage"><div><dt>标题</dt><dd>{selected.packaging?.title}</dd></div><div><dt>Hook</dt><dd>{selected.packaging?.hook}</dd></div><div><dt>封面主锤字</dt><dd>{selected.packaging?.cover}</dd></div><div><dt>视觉方向</dt><dd>{selected.packaging?.visual}</dd></div></dl></article>
           {(selected.coverImages?.landscape || selected.coverImages?.portrait) && <article className="outputBlock"><h3>生成封面</h3><div className="savedCovers">{selected.coverImages.landscape && <figure><img src={localizeCoverUrl(selected.coverImages.landscape)} alt="已保存横版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.landscape, "png", "金融巨子-横版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.landscape, "jpg", "金融巨子-横版封面")}>下载 JPG</button></figcaption></figure>}{selected.coverImages.portrait && <figure><img src={localizeCoverUrl(selected.coverImages.portrait)} alt="已保存竖版封面" /><figcaption><button onClick={() => downloadCover(selected.coverImages.portrait, "png", "金融巨子-竖版封面")}>下载 PNG</button><button onClick={() => downloadCover(selected.coverImages.portrait, "jpg", "金融巨子-竖版封面")}>下载 JPG</button></figcaption></figure>}</div></article>}
           {selected.huashengTask?.status === "ready" && selected.huashengTask?.downloadUrl && <article className="outputBlock savedVideo"><div className="blockHead"><h3>花生成片</h3><a href={selected.huashengTask.downloadUrl} download>下载 MP4</a></div><video controls preload="metadata" src={selected.huashengTask.downloadUrl} /><p>{selected.huashengTask.aspect || "默认画幅"} · {selected.huashengTask.mode || "auto"} 模式 · 本地 huasheng-cli 生成</p></article>}
+          <article className="outputBlock douyinReviewBinding">
+            <div className="blockHead"><h3>抖音复盘关联</h3><button className="ghost" onClick={() => setReviewPickerOpen((value) => !value)}>{matchedDouyinReview ? "更换关联" : "选择历史作品"}</button></div>
+            {matchedDouyinReview ? <>
+              <p className="reviewBoundTitle"><b>{matchedDouyinReview.title}</b><span>{new Date(matchedDouyinReview.publishedAt).toLocaleString("zh-CN")} · 创作者中心快照</span></p>
+              <div className="assetReviewSnapshot"><span>播放<strong>{matchedDouyinReview.views.toLocaleString("zh-CN")}</strong></span><span>平均观看<strong>{matchedDouyinReview.averageWatchSeconds.toFixed(1)}秒</strong></span><span>平均播放占比<strong>{matchedDouyinReview.averagePlayRatio}%</strong></span><span>2秒跳出<strong>{matchedDouyinReview.twoSecondBounceRate == null ? "—" : `${matchedDouyinReview.twoSecondBounceRate}%`}</strong></span><span>5秒完播<strong>{matchedDouyinReview.fiveSecondCompletionRate == null ? "—" : `${matchedDouyinReview.fiveSecondCompletionRate}%`}</strong></span><span>搜索/推荐<strong>{matchedDouyinReview.trafficSources ? `${matchedDouyinReview.trafficSources.搜索 || 0}% / ${matchedDouyinReview.trafficSources.推荐页 || 0}%` : "—"}</strong></span></div>
+            </> : <div className="pendingCollect"><b>当前项目尚未关联抖音后台作品</b><span>可以从已抓取的29条历史作品中选择；绑定只影响复盘索引，不会创建新项目。</span></div>}
+            {reviewPickerOpen && <div className="reviewPicker"><input value={reviewSearch} onChange={(event) => setReviewSearch(event.target.value)} placeholder="搜索抖音作品标题" autoFocus /><div>{filteredDouyinReviews.map((item) => <button key={item.id} onClick={() => bindDouyinReview(item.id)}><span><b>{item.title}</b><small>{new Date(item.publishedAt).toLocaleDateString("zh-CN")} · {item.views.toLocaleString("zh-CN")} 播放 · 平均观看 {item.averageWatchSeconds.toFixed(1)} 秒</small></span><i>关联</i></button>)}</div></div>}
+          </article>
           <article className="outputBlock publicationAssets">
             <div className="blockHead"><h3>投稿链接与平台数据</h3><span>{selectedLinks.length} 个平台</span></div>
             <div className="linkCollector"><label>追加平台视频链接<input value={newLink} onChange={(event) => setNewLink(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addPublication(); }} placeholder="粘贴抖音、小红书、Bilibili、YouTube 或 TikTok 链接" /></label><button className="primary" disabled={!newLink.trim()} onClick={addPublication}>添加并采集</button></div>

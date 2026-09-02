@@ -78,6 +78,14 @@ WRITER_SYSTEM += FINANCIAL_STORY_STYLE + COMPANY_EARNINGS_PRIORITY
 REVIEWER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY
 FINALIZER_SYSTEM += FINANCIAL_STORY_STYLE + FINANCIAL_STORY_REVIEW + COMPANY_EARNINGS_PRIORITY
 
+PERFORMANCE_LEARNING = """
+
+后台实证优先：把前60秒当成独立交付。前2秒给异常，前5秒说清准确主体和新动作，前15秒说明为何与普通股民有关，前60秒完成第一轮因果闭环，不得为悬念拖延答案。搜索型题准确兑现实体、动作、数字和时间；推荐型题迅速兑现谁获益、谁承担成本的利益冲突；双引擎两者兼顾。上述均为创作与黄色审校目标，不得因表达或节奏未达标而拒绝返回正文；只有事实不可核验或安全边界冲突才可硬拦截。
+"""
+WRITER_SYSTEM += PERFORMANCE_LEARNING
+REVIEWER_SYSTEM += PERFORMANCE_LEARNING
+FINALIZER_SYSTEM += PERFORMANCE_LEARNING
+
 # Keep the reusable writing skill as the final authority shared by the writer,
 # reviewer and repair pass. Updating the skill therefore changes real output,
 # instead of leaving methodology in documentation that the model never sees.
@@ -123,16 +131,42 @@ def normalize_oral_paragraphs(text, target=190, hard_limit=230):
     return "\n\n".join(normalized)
 
 
+def _closing_actions(text):
+    ending = re.sub(r"\s+", "", text)[-420:]
+    return {
+        "like": "点赞" in ending,
+        "follow": bool(re.search(r"(?:关注.{0,10}(?:金融巨子|账号|我)|(?:金融巨子|这个账号).{0,8}关注|点个关注|记得关注)", ending)),
+        "continuation": bool(re.search(r"下一篇|下一期|下期|下回|继续(?:聊|拆|跟踪|看)", ending)),
+    }
+
+
 def ensure_closing_cta(text):
-    """Fill the literal CTA locally instead of paying for or rejecting a rewrite."""
+    """Repair the existing CTA without appending a second complete ending."""
     clean = text.strip()
-    ending = re.sub(r"\s+", "", clean)[-420:]
-    has_like = "点赞" in ending
-    has_follow = bool(re.search(r"(?:关注.{0,10}(?:金融巨子|账号|我)|(?:金融巨子|这个账号).{0,8}关注|点个关注|记得关注)", ending))
-    has_continuation = bool(re.search(r"下一篇|下一期|下期|下回|继续(?:聊|拆|跟踪|看)", ending))
-    if has_like and has_follow and has_continuation:
+    tail_start = max(0, len(clean) - 700)
+    head, tail = clean[:tail_start], clean[tail_start:]
+    tail = re.sub(r"点(?:一|一下|个)赞", "点赞", tail)
+    clean = head + tail
+
+    fallback = "如果这期分析对你有帮助，记得点赞、关注金融巨子，咱们下期继续聊最新的市场变化。"
+    if clean.endswith(fallback):
+        prefix = clean[:-len(fallback)].rstrip()
+        if all(_closing_actions(prefix).values()):
+            clean = prefix
+
+    actions = _closing_actions(clean)
+    if all(actions.values()):
         return clean
-    return clean + "\n\n如果这期分析对你有帮助，记得点赞、关注金融巨子，咱们下期继续聊最新的市场变化。"
+    if not any(actions.values()):
+        return clean + "\n\n如果这期分析对你有帮助，记得点赞并关注金融巨子，咱们下期继续聊最新的市场变化。"
+    additions = []
+    if not actions["like"]:
+        additions.append("认可今天这个拆解的朋友，请给这期内容点赞。")
+    if not actions["follow"]:
+        additions.append("也欢迎关注金融巨子，我会继续拆解最新财经热点背后的资金逻辑。")
+    if not actions["continuation"]:
+        additions.append("下期咱们继续聊最新的市场变化。")
+    return clean + "\n\n" + "".join(additions)
 
 
 def delivery_problems(text):
@@ -179,6 +213,10 @@ def delivery_problems(text):
         problems.append("结尾没有直接请观众关注并说明继续跟踪的理由")
     if not re.search(r"下一篇|下一期|下期|下回|继续(?:聊|拆|跟踪|看)", ending):
         problems.append("结尾没有用泛化表达承接持续更新")
+    if len(re.findall(r"点赞|点(?:一|一下|个)赞", ending)) > 1:
+        problems.append("结尾重复引导点赞")
+    if len(re.findall(r"关注(?:金融巨子|账号|我)|关注.{0,8}(?:金融巨子|账号|我)", ending)) > 1:
+        problems.append("结尾重复引导关注")
     if re.search(r"(?:你|大家).{0,12}(?:持有|成本价|买入|卖出|加仓|减仓|抄底|上车)", ending):
         problems.append("结尾互动在询问观众持仓或买卖计划")
     return problems

@@ -118,6 +118,11 @@ function standaloneAnalysisForEvent(event: any) {
     markets: event.markets || [], marketImportance: Math.max(event.marketReaction || 0, isCorporate ? 58 : 50),
     explanatoryPower: Math.max(event.fit || 0, 64), evidenceStrength,
     novelty: event.novelty || 0, confidence: event.confidence || 0,
+    searchDemand: Math.min(100, (event.ageHours <= 8 ? 35 : 10) + (isCorporate ? 30 : 10) + (event.marketReaction || 0) * 0.25),
+    stakeholderConflict: isCorporate ? 65 : isMarketMove ? 45 : 35,
+    entitySpecificity: (event.actors || []).length || (event.assets || []).length ? 75 : 40,
+    timelinessOpportunity: freshnessForAge(event.ageHours ?? 48),
+    discoveryLane: isCorporate ? "dual" as const : "recommendation" as const,
   };
 }
 
@@ -215,7 +220,7 @@ export async function POST(request: Request) {
       deriveCorporateReleaseFollowUpQueries(deepseekApiKey, firstPassSemantic),
       deriveMarketFollowUpQueries(deepseekApiKey, firstPassSemantic),
     ]);
-    const allFollowUpQueries = [...new Set([...corporateFollowUp.queries, ...followUp.queries])];
+    const allFollowUpQueries: string[] = [...new Set<string>([...corporateFollowUp.queries, ...followUp.queries].map(String))];
     for (const query of allFollowUpQueries.filter((item) => !baseQueries.includes(item))) {
       const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
     }
@@ -255,8 +260,8 @@ export async function POST(request: Request) {
     }));
     const semantic = await standardizeFinancialEvents(deepseekApiKey, semanticReferences);
     const referenceById = new Map(semanticReferences.map((item) => [item.traceId, item]));
-    const ranked = semantic.events.map((event) => {
-      const eventEvidence = event.evidenceIds.map((id) => referenceById.get(id)).filter(Boolean) as any[];
+    const ranked = semantic.events.map((event: any) => {
+      const eventEvidence = event.evidenceIds.map((id: string) => referenceById.get(id)).filter(Boolean) as any[];
       const scoring = scoreSemanticEvent(event, eventEvidence);
       return {
         ...event, ...scoring, thesis: event.summary, category: event.family,
@@ -270,8 +275,8 @@ export async function POST(request: Request) {
           snippet: item.snippet, query: item.query, authoritative: item.authoritative, social: Boolean(item.social), score: 0,
         })),
       };
-    }).sort((a, b) => b.score - a.score);
-    const events = ranked.map((event, index) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));
+    }).sort((a: any, b: any) => b.score - a.score);
+    const events = ranked.map((event: any, index: number) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));
     const causal = await buildCausalAnalysisTopics(deepseekApiKey, events);
     const eventById = new Map(events.flatMap((event: any) => [[event.id, event], [event.eventId, event]]));
     const augmentedAnalyses = [...causal.topics];
@@ -297,7 +302,12 @@ export async function POST(request: Request) {
         thesis: `${analysis.mechanism}${analysis.counterEvidence ? ` 反证是：${analysis.counterEvidence}` : ""}`,
         category: "原因分析", markets: analysis.markets, trigger: `${analysis.causality} · ${analysis.verificationSignals.join("、")}`,
         sourceCount, authorityCount, socialCount: linkedEvents.reduce((sum, event) => sum + (event.socialCount || 0), 0),
-        heat: analysis.marketImportance, fit: analysis.explanatoryPower, depth: analysis.evidenceStrength,
+        heat: Math.round(analysis.marketImportance * 0.55 + analysis.searchDemand * 0.45),
+        fit: Math.round(analysis.explanatoryPower * 0.6 + analysis.stakeholderConflict * 0.25 + analysis.entitySpecificity * 0.15),
+        depth: analysis.evidenceStrength,
+        searchDemand: analysis.searchDemand, stakeholderConflict: analysis.stakeholderConflict,
+        entitySpecificity: analysis.entitySpecificity, timelinessOpportunity: analysis.timelinessOpportunity,
+        discoveryLane: analysis.discoveryLane,
         freshness: `${latestAgeHours}小时前最新动作`, ageHours: latestAgeHours, freshnessScore: topicFreshnessScore, freshnessLane: freshnessLane(latestAgeHours),
         gates: { hardGate: true, reasons: [] }, rejectionReasons: [], evidence,
         observedEvents: analysis.observedEventIds, causalEvents: analysis.causalEventIds,
@@ -358,7 +368,7 @@ export async function POST(request: Request) {
       event.topicCount = count;
       event.status = count ? "已进入高潜选题" : "已发现，未进入高潜";
     }
-    const eventForEvidence = new Map<string, string>(); events.forEach((event) => event.evidenceIds.forEach((id) => eventForEvidence.set(id, event.eventId)));
+    const eventForEvidence = new Map<string, string>(); events.forEach((event: any) => event.evidenceIds.forEach((id: string) => eventForEvidence.set(id, event.eventId)));
     const unclassified = new Set(semantic.unclassifiedEvidenceIds); const retainedIds = new Set(references.map((item: any) => item.traceId));
     const traces = collected.map((item) => ({
       traceId: item.traceId, title: item.title, url: item.url, query: item.query, publishedAt: item.date || item.published_time || item.publish_time || "",
@@ -383,7 +393,7 @@ export async function POST(request: Request) {
       collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: 48,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
       topics, rejectedTopics: [], events, discoveredEventCount: events.length,
-      categoryCoverage: [...new Set(events.map((item) => item.category || "other"))], mainTopicCount: Math.min(5, topics.length),
+      categoryCoverage: [...new Set(events.map((item: any) => item.category || "other"))], mainTopicCount: Math.min(5, topics.length),
       semanticReceipts: semantic.receipts, followUpSemanticReceipt: [corporateFollowUp.receipt, followUp.receipt].filter(Boolean).join(","), causalSemanticReceipt: causal.receipt,
       diagnostics: {
         traces, counts, freshnessBuckets, latestByMarket,

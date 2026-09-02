@@ -75,6 +75,7 @@ export const coverageMatrix: CoverageCell[] = [
     queries: [
       "今日 财经 热议 突发 异常上涨 异常下跌 新公司 新政策 雪球 微博",
       "今日 热门股票 财报 雪球 X Twitter 投资者 热议 分歧 预期",
+      "今日 股票 热搜 公司 财报 IPO 配售 监管 暴涨 暴跌 为什么",
       "today earnings stocks premarket after hours X Twitter investor discussion sentiment",
       "today finance breaking unusual move emerging company policy reddit youtube tiktok markets",
     ],
