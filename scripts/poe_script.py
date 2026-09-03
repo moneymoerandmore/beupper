@@ -244,6 +244,27 @@ def delivery_problems(text):
     return problems
 
 
+def opening_performance_problems(text):
+    """Approximate spoken-time QA at four Chinese characters per second."""
+    compact = re.sub(r"\s+", "", text)
+    first_2s, first_5s, first_15s, first_60s = compact[:12], compact[:28], compact[:80], compact[:300]
+    problems = []
+    anomaly = re.compile(r"却|反而|竟然|突然|意外|不及预期|超预期|大涨|大跌|暴涨|暴跌|跳水|飙升|新高|新低|翻倍|转亏|转盈|盈利.{0,8}下跌|增长.{0,8}下跌")
+    event_action = re.compile(r"发布|公布|财报|业绩|指引|配售|回购|分红|收购|出售|禁令|制裁|降息|加息|下调|上调|上涨|下跌|大涨|大跌|暴涨|暴跌|跳水|反弹|创新高|创新低|上市|裁员|增资|减持")
+    investor_relevance = re.compile(r"股民|投资者|股价|股票|持仓|A股|港股|美股|市场|估值|盈利|利润|资金|产业链|供应链|板块|指数")
+    causal = re.compile(r"因为|原因|关键(?:是|在于)|核心(?:是|在于|原因)|主因|本质|来自|取决于|导致|压低|推高|重估|计价|定价|意味着|反映")
+    consequence = re.compile(r"股价|估值|盈利|利润|收入|现金流|订单|成本|资金|仓位|需求|供给|风险偏好|利率|资本开支")
+    if not anomaly.search(first_2s):
+        problems.append("前2秒没有出现具体异常或反预期结果")
+    if not event_action.search(first_5s):
+        problems.append("前5秒没有说清本次事件的新动作或价格反应")
+    if not investor_relevance.search(first_15s):
+        problems.append("前15秒没有说明这件事与股民或资产价格的关系")
+    if not (causal.search(first_60s) and consequence.search(first_60s)):
+        problems.append("前60秒没有完成事件、原因与股价影响的第一轮因果闭环")
+    return problems
+
+
 def _parse_evidence_time(value):
     raw = str(value or "").strip().replace("Z", "+00:00")
     if not raw:
@@ -444,8 +465,18 @@ def generate_script(request_data):
         draft = completion(client, model, WRITER_SYSTEM, brief, receipts)
         final_script = completion(client, model, REVIEWER_SYSTEM, f"{brief}\n\n主笔草稿：\n{draft}", receipts)
         final_script = ensure_closing_cta(normalize_oral_paragraphs(extract_script(final_script)))
-        problems = delivery_problems(final_script) + factual_number_problems(final_script, topic_context) + community_usage_problems(final_script)
         stages = ["主笔创作", "独立终审重写"]
+        opening_problems = opening_performance_problems(final_script)
+        if opening_problems:
+            repair_brief = (
+                f"{brief}\n\n【待修复成稿】\n{final_script}\n\n"
+                "【前60秒独立验收未通过】\n- " + "\n- ".join(opening_problems) +
+                "\n请重写完整正文，尤其重做开头。按约每秒4个汉字验收：前12字内出现具体异常，前28字内说清主体的新动作或价格反应，前80字内说明与普通股民或资产价格的关系，前300字内完成事件—原因—股价影响的第一轮闭环。不要只在原稿前面机械补四句话。"
+            )
+            final_script = completion(client, model, FINALIZER_SYSTEM, repair_brief, receipts)
+            final_script = ensure_closing_cta(normalize_oral_paragraphs(extract_script(final_script)))
+            stages.append("前60秒专项修复")
+        problems = opening_performance_problems(final_script) + delivery_problems(final_script) + factual_number_problems(final_script, topic_context) + community_usage_problems(final_script)
         return {
             "ok": True,
             "script": final_script,
