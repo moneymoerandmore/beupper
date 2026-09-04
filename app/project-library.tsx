@@ -179,8 +179,9 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       window.localStorage.setItem("financial-titan-douyin-live-reviews", JSON.stringify(liveReviews));
       window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(completed));
       window.localStorage.setItem("financial-titan-projects", JSON.stringify(nextProjects));
-      setDouyinSyncMessage(`已读取 ${liveReviews.length} 条抖音作品，自动匹配 ${Object.keys(completed).length} 个资产项目；反馈快照已写入项目。`);
-      notify("抖音作品和资产项目已重新匹配，实际反馈数据已保存");
+      const detailedCount = liveReviews.filter((item) => item.detailCollected).length;
+      setDouyinSyncMessage(`已读取 ${liveReviews.length} 条作品，其中 ${detailedCount} 条取得逐稿留存明细；自动匹配 ${Object.keys(completed).length} 个资产项目并写入反馈快照。${payload.detailComplete ? "" : " 本次数据中心明细未完整返回，可稍后再次同步。"}`);
+      notify(payload.detailComplete ? "抖音逐稿详细数据已保存到对应资产" : "作品列表已保存，但逐稿留存明细未完整返回");
     } catch (error) {
       setDouyinSyncMessage(error instanceof Error ? error.message : "抖音同步失败");
     } finally {

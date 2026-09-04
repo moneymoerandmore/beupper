@@ -1,3 +1,5 @@
-2026/09/04-16:55:43.736 c518 Reusing MANIFEST D:\Users\cloud\Documents\金融巨子起号\data\douyin-browser\Default\Local Storage\leveldb/MANIFEST-000001
-2026/09/04-16:55:43.742 c518 Recovering log #3
-2026/09/04-16:55:43.744 c518 Reusing old log D:\Users\cloud\Documents\金融巨子起号\data\douyin-browser\Default\Local Storage\leveldb/000003.log 
+2026/09/04-23:33:17.695 7284 Reusing MANIFEST D:\Users\cloud\Documents\金融巨子起号\data\douyin-browser\Default\Local Storage\leveldb/MANIFEST-000001
+2026/09/04-23:33:17.701 7284 Recovering log #19
+2026/09/04-23:33:17.701 7284 Level-0 table #22: started
+2026/09/04-23:33:17.705 7284 Level-0 table #22: 28686 bytes OK
+2026/09/04-23:33:17.709 7284 Delete type=0 #19

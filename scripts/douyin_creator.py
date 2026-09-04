@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR = PROJECT_ROOT / "data" / "douyin-browser"
 DEBUG_PORT = 9333
 CREATOR_URL = "https://creator.douyin.com/creator-micro/content/manage"
+DATA_CENTER_URL = "https://creator.douyin.com/creator-micro/data-center/content"
 
 
 def _browser_executable():
@@ -68,8 +69,7 @@ def login_status():
             page.goto(CREATOR_URL, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(2500)
             body_text = page.locator("body").inner_text()
-            login_ui = (("扫码登录" in body_text and ("验证码登录" in body_text or "密码登录" in body_text))
-                        or ("创作者登录" in body_text and "作品管理" not in body_text))
+            login_ui = ("扫码登录" in body_text and ("验证码登录" in body_text or "密码登录" in body_text))
             signed_in = _logged_in(context) and "login" not in page.url.lower() and not login_ui
             return {"ok": True, "loggedIn": signed_in, "url": page.url,
                     "message": "已检测到抖音创作者登录态" if signed_in else "尚未检测到有效登录态"}
@@ -84,6 +84,12 @@ def _number(value):
     text = str(value).replace(",", "").strip()
     match = re.search(r"-?\d+(?:\.\d+)?", text)
     return float(match.group()) if match else None
+
+
+def _rate(value):
+    number = _number(value)
+    if number is None: return None
+    return number * 100 if -1 <= number <= 1 else number
 
 
 def _first(item, *keys):
@@ -118,7 +124,7 @@ def _normalize_record(item):
     item_id = str(_first(merged, "aweme_id", "item_id", "itemId", "video_id", "videoId", "id") or "")
     duration = _number(_first(merged, "duration", "duration_seconds", "durationSeconds"))
     if duration and duration > 10000: duration /= 1000
-    ratio = _number(_first(merged, "average_play_ratio", "avg_play_ratio", "averagePlayRatio"))
+    ratio = _rate(_first(merged, "average_play_ratio", "avg_play_ratio", "averagePlayRatio"))
     watch = _number(_first(merged, "average_watch_seconds", "avg_play_duration", "averagePlayDuration"))
     return {
         "id": f"dy-live-{item_id or abs(hash((title, published_at)))}", "platformId": item_id,
@@ -129,14 +135,76 @@ def _normalize_record(item):
         "shares": _number(_first(merged, "share_count", "shares")) or 0,
         "favorites": _number(_first(merged, "collect_count", "favorite_count", "favorites")) or 0,
         "followers": _number(_first(merged, "follow_count", "fans_count", "followers")) or 0,
-        "coverCtr": _number(_first(merged, "cover_ctr", "coverCtr")) or 0,
+        "coverCtr": _rate(_first(merged, "cover_ctr", "coverCtr")) or 0,
         "averagePlayRatio": ratio or 0, "averageWatchSeconds": watch or 0,
-        "completionRate": _number(_first(merged, "finish_rate", "completion_rate", "completionRate")),
-        "twoSecondBounceRate": _number(_first(merged, "two_second_bounce_rate", "twoSecondBounceRate")),
-        "fiveSecondCompletionRate": _number(_first(merged, "five_second_finish_rate", "fiveSecondCompletionRate")),
+        "completionRate": _rate(_first(merged, "finish_rate", "completion_rate", "completionRate")),
+        "twoSecondBounceRate": _rate(_first(merged, "two_second_bounce_rate", "twoSecondBounceRate")),
+        "fiveSecondCompletionRate": _rate(_first(merged, "five_second_finish_rate", "fiveSecondCompletionRate")),
         "url": _first(merged, "share_url", "video_url", "url") or "",
         "collectedAt": datetime.now(timezone.utc).isoformat(), "source": "douyin_creator_center",
+        "detailCollected": False,
     }
+
+
+def _detail_values(item):
+    """Extract per-item analytics even when a response does not repeat play_count."""
+    if not isinstance(item, dict): return None
+    item_id = str(_first(item, "aweme_id", "item_id", "itemId", "video_id", "videoId", "id") or "")
+    title = _first(item, "title", "video_title", "item_title", "desc", "name")
+    if not item_id and not isinstance(title, str): return None
+    aliases = {
+        "views": ("play_count", "view_count", "vv"),
+        "averageWatchSeconds": ("average_play_duration", "avg_play_duration", "average_watch_seconds"),
+        "averagePlayRatio": ("average_play_ratio", "avg_play_ratio"),
+        "completionRate": ("finish_rate", "completion_rate", "video_finish_rate"),
+        "twoSecondBounceRate": ("bounce_rate_2s", "two_second_bounce_rate", "2s_bounce_rate"),
+        "fiveSecondCompletionRate": ("completion_rate_5s", "five_second_finish_rate", "5s_finish_rate"),
+        "coverCtr": ("cover_ctr", "cover_click_rate"),
+        "followers": ("net_follow_fans", "follow_count", "fans_count"),
+    }
+    values = {"platformId": item_id, "title": title.strip() if isinstance(title, str) else ""}
+    found = False
+    analytics_found = False
+    for target, keys in aliases.items():
+        value = (_rate(_first(item, *keys)) if target in {"averagePlayRatio", "completionRate",
+                 "twoSecondBounceRate", "fiveSecondCompletionRate", "coverCtr"}
+                 else _number(_first(item, *keys)))
+        if value is not None:
+            values[target] = value
+            found = True
+            if target in {"averageWatchSeconds", "averagePlayRatio", "completionRate",
+                          "twoSecondBounceRate", "fiveSecondCompletionRate", "coverCtr"}:
+                analytics_found = True
+    if found:
+        values["detailCollected"] = analytics_found
+        return values
+    return None
+
+
+def _merge_details(records, details):
+    by_id = {row.get("platformId"): row for row in records if row.get("platformId")}
+    by_title = {re.sub(r"\W+", "", row.get("title", "")): row for row in records if row.get("title")}
+    for detail in details:
+        target = by_id.get(detail.get("platformId"))
+        if not target and detail.get("title"):
+            target = by_title.get(re.sub(r"\W+", "", detail["title"]))
+        if not target: continue
+        for key, value in detail.items():
+            if key == "detailCollected" and not value:
+                continue
+            if key == "views" and target.get("views") is not None:
+                continue
+            if key not in {"platformId", "title"} and value is not None:
+                target[key] = value
+
+
+def _find_work_page(payload):
+    for item in _walk(payload):
+        if not isinstance(item, dict): continue
+        works = _first(item, "aweme_list", "item_list", "work_list", "items")
+        if isinstance(works, list) and any(isinstance(row, dict) and _first(row, "aweme_id", "item_id") for row in works):
+            return works, _first(item, "max_cursor", "cursor", "next_cursor"), bool(_first(item, "has_more", "hasMore"))
+    return None
 
 
 def sync_creator_data():
@@ -155,13 +223,41 @@ def sync_creator_data():
         page.goto(CREATOR_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3500)
         body_text = page.locator("body").inner_text()
-        login_ui = (("扫码登录" in body_text and ("验证码登录" in body_text or "密码登录" in body_text))
-                    or ("创作者登录" in body_text and "作品管理" not in body_text))
+        login_ui = ("扫码登录" in body_text and ("验证码登录" in body_text or "密码登录" in body_text))
         if not _logged_in(context) or login_ui:
             return {"ok": False, "status": 401, "loginRequired": True, "error": "未检测到抖音创作者中心登录态"}
+        # Pull every work page sequentially. Douyin currently defaults to 12 items per page.
+        first_page = next((_find_work_page(payload) for payload in payloads if _find_work_page(payload)), None)
+        if not first_page:
+            for attempt in range(3):
+                try:
+                    page_payload = page.evaluate("""async () => {
+                      const u = '/janus/douyin/creator/pc/work_list?status=0&count=50&max_cursor=0&scene=star_atlas&device_platform=android&aid=1128';
+                      const r = await fetch(u, {credentials:'include'}); if (!r.ok) throw new Error(`work_list ${r.status}`); return await r.json();
+                    }""")
+                    payloads.append(page_payload)
+                    first_page = _find_work_page(page_payload)
+                    if first_page: break
+                except Exception:
+                    if attempt < 2: page.wait_for_timeout(1500)
+        cursor = first_page[1] if first_page else 0
+        has_more = first_page[2] if first_page else False
+        seen_cursors = {str(cursor)}
+        for _ in range(60):
+            if not has_more or cursor in (None, ""): break
+            page_payload = page.evaluate("""async (cursor) => {
+              const u = `/janus/douyin/creator/pc/work_list?status=0&count=50&max_cursor=${encodeURIComponent(cursor)}&scene=star_atlas&device_platform=android&aid=1128`;
+              const r = await fetch(u, {credentials:'include'}); if (!r.ok) throw new Error(`work_list ${r.status}`); return await r.json();
+            }""", cursor)
+            payloads.append(page_payload)
+            page_info = _find_work_page(page_payload)
+            if not page_info: break
+            cursor, has_more = page_info[1], page_info[2]
+            if str(cursor) in seen_cursors: break
+            seen_cursors.add(str(cursor))
         for _ in range(12):
             page.mouse.wheel(0, 1800)
-            page.wait_for_timeout(650)
+            page.wait_for_timeout(300)
         records = {}
         for payload in payloads:
             for item in _walk(payload):
@@ -185,9 +281,71 @@ def sync_creator_data():
                           "source": "douyin_creator_center"}
                 records[record["id"]] = record
         result = sorted(records.values(), key=lambda row: row.get("publishedAt") or "", reverse=True)
+        if not result:
+            return {"ok": False, "status": 502, "error": "抖音登录态有效，但作品列表本次没有返回数据；请稍后重试同步"}
+        detail_probe = {}
+        detail_error = None
+        if result:
+            try:
+                response_urls.clear()
+                payloads.clear()
+                page.goto(DATA_CENTER_URL, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(8000)
+                item_list_tab = page.get_by_text("投稿列表", exact=True)
+                if item_list_tab.count():
+                    item_list_tab.first.click(timeout=5000)
+                    page.wait_for_timeout(8000)
+                end_date = datetime.now().strftime("%Y%m%d")
+                start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+                direct_payloads = page.evaluate("""async ({startDate,endDate}) => {
+                  const metrics = [1,10,11,14];
+                  const results = [];
+                  for (const metric of metrics) {
+                    const q = new URLSearchParams({
+                      genres: JSON.stringify([1,2,3,4,5,8]), start_date:startDate,
+                      end_date:endDate, primary_verticals:JSON.stringify([]), metric_type:String(metric)
+                    });
+                    try {
+                      const r = await fetch(`/janus/douyin/creator/data/item_analysis/item_performance?${q}`, {credentials:'include'});
+                      if (r.ok) results.push(await r.json());
+                    } catch (_) {}
+                  }
+                  return results;
+                }""", {"startDate": start_date, "endDate": end_date})
+                payloads.extend(direct_payloads or [])
+                for label in ("内容数据", "内容分析", "作品数据", "作品分析"):
+                    control = page.get_by_text(label, exact=True)
+                    if control.count():
+                        control.first.click(timeout=5000); page.wait_for_timeout(2500); break
+                metric_clicks = []
+                for label in ("播放量", "平均播放时长", "2秒跳出率", "5秒完播率"):
+                    try:
+                        control = page.get_by_text(label, exact=True)
+                        if control.count() and control.first.is_visible():
+                            control.first.click(timeout=2500); page.wait_for_timeout(1200); metric_clicks.append(label)
+                    except Exception:
+                        pass
+                details = []
+                for payload in payloads:
+                    for item in _walk(payload):
+                        detail = _detail_values(item)
+                        if detail: details.append(detail)
+                _merge_details(result, details)
+                detail_probe = {"page": "data-center", "metricsRequested": metric_clicks,
+                                "detailRows": len(details),
+                                "url": page.url,
+                                "visibleText": (re.sub(r"\s+", " ", page.locator("body").inner_text())[:1200]
+                                                if not details else ""),
+                                "responsePaths": list(dict.fromkeys(item.split("?", 1)[0] for item in response_urls[-80:]))}
+            except Exception as error:
+                detail_error = str(error)[:240]
+                detail_probe = {"page": "data-center", "error": detail_error}
         return {"ok": True, "loggedIn": True, "records": result, "count": len(result),
                 "collectedAt": datetime.now(timezone.utc).isoformat(),
-                "message": f"已从抖音创作者中心读取 {len(result)} 条作品",
+                "detailComplete": bool(result) and any(row.get("detailCollected") for row in result),
+                "message": (f"已读取 {len(result)} 条作品，并合并逐稿内容分析" if any(row.get("detailCollected") for row in result)
+                            else f"已读取 {len(result)} 条作品；逐稿内容分析本次未完成"),
+                "detailProbe": detail_probe,
                 "diagnostic": None if result else {"pageUrl": page.url, "pageTitle": page.title(),
                     "responsePaths": [item.split("?", 1)[0] for item in response_urls[-30:]],
                     "visibleText": re.sub(r"\s+", " ", page.locator("body").inner_text())[:600]}}

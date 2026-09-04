@@ -73,6 +73,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
   }
 
+  if (-not (Test-Path -LiteralPath (Join-Path $projectDir "dist\server"))) {
+    Write-Host "[First run] Building the web app..." -ForegroundColor Cyan
+    $env:WRANGLER_LOG_PATH = ".wrangler/wrangler.log"
+    & $npmExe run build
+    if ($LASTEXITCODE -ne 0) { throw "Web app build failed." }
+  }
+
   $venvPython = Join-Path $venvDir "Scripts\python.exe"
   if (-not (Test-Path -LiteralPath $venvPython)) {
     Write-Host "[First run] Creating the Python environment..." -ForegroundColor Cyan
@@ -108,7 +115,7 @@ try {
     $env:WRANGLER_LOG_PATH = ".wrangler/wrangler.log"
     $vinextCli = Join-Path $projectDir "node_modules\vinext\dist\cli.js"
     Start-Process -FilePath $nodeExe `
-      -ArgumentList @($vinextCli, "dev", "--port", "$frontendPort") `
+      -ArgumentList @($vinextCli, "start", "--port", "$frontendPort") `
       -WorkingDirectory $projectDir `
       -WindowStyle Hidden `
       -RedirectStandardOutput (Join-Path $logDir "web.out.log") `
