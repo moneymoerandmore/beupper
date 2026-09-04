@@ -15,11 +15,13 @@ from poe_script import generate_script
 from deepseek_packaging import generate_packaging
 from social_sources import collect_social_sources, open_social_login, social_login_status
 from huasheng_cli import VIDEO_DIR, auth_status as huasheng_auth_status, start_login as huasheng_start_login, start_make as huasheng_start_make, task_status as huasheng_task_status
+from douyin_creator import login_status as douyin_login_status, open_login as douyin_open_login, sync_creator_data as douyin_sync_creator_data
 
 
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "4318"))
 COVER_DIR = Path(__file__).resolve().parents[1] / "data" / "covers"
+PUBLIC_COVER_INDEX = Path(__file__).resolve().parents[1] / "public" / "generated-covers" / "index.json"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -43,6 +45,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, "service": "local-ai-gateway", "writing": "deepseek", "images": "poe", "video": "huasheng-cli"})
         elif parsed.path == "/api/huasheng/status":
             self.send_json(200, huasheng_auth_status())
+        elif parsed.path == "/api/douyin/status":
+            self.send_json(200, douyin_login_status())
         elif parsed.path == "/api/huasheng/task":
             result = huasheng_task_status(parse_qs(parsed.query).get("id", [""])[0])
             self.send_json(200 if result.get("ok") else int(result.get("status", 404)), result)
@@ -60,8 +64,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(content)
-        elif self.path.startswith("/covers/"):
-            filename = self.path.split("?", 1)[0].removeprefix("/covers/")
+        elif parsed.path == "/covers/index.json":
+            if not PUBLIC_COVER_INDEX.is_file():
+                self.send_json(200, {})
+                return
+            content = PUBLIC_COVER_INDEX.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(content)
+        elif parsed.path.startswith("/covers/"):
+            filename = parsed.path.removeprefix("/covers/")
             target = (COVER_DIR / filename).resolve()
             if target.parent != COVER_DIR.resolve() or not target.is_file():
                 self.send_json(404, {"error": "Cover not found"})
@@ -79,13 +95,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.removeprefix("/api")
-        if route not in ("/generate", "/generate-script", "/generate-packaging", "/social-search", "/social-login", "/huasheng/login", "/huasheng/make"):
+        if route not in ("/generate", "/generate-script", "/generate-packaging", "/social-search", "/social-login", "/huasheng/login", "/huasheng/make", "/douyin/login", "/douyin/sync"):
             self.send_json(404, {"error": "Not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request_data = json.loads(self.rfile.read(length).decode("utf-8"))
-            if route == "/huasheng/login":
+            if route == "/douyin/login":
+                result = douyin_open_login()
+            elif route == "/douyin/sync":
+                result = douyin_sync_creator_data()
+            elif route == "/huasheng/login":
                 result = huasheng_start_login()
             elif route == "/huasheng/make":
                 result = huasheng_start_make(request_data)

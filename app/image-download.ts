@@ -13,16 +13,23 @@ function isLocalGeneratedCover(imageUrl: string) {
 
 export function localizeCoverUrl(imageUrl: string) {
   if (!imageUrl) return imageUrl;
-  if (imageUrl.startsWith("/generated-covers/")) return imageUrl;
+  const browserHost = typeof window !== "undefined" ? window.location.hostname : "";
+  const isLocalApp = browserHost === "localhost" || browserHost === "127.0.0.1";
+  const gatewayHost = browserHost === "localhost" ? "localhost" : "127.0.0.1";
+  const gatewayCover = (filename: string) => `${typeof window !== "undefined" ? window.location.protocol : "http:"}//${gatewayHost}:4318/covers/${encodeURIComponent(filename)}`;
+  if (imageUrl.startsWith("/generated-covers/")) {
+    const filename = imageUrl.split("/").pop() || "";
+    return isLocalApp && filename ? gatewayCover(filename) : imageUrl;
+  }
   if (imageUrl.startsWith("/api/generated-cover?")) {
     const filename = new URL(imageUrl, "http://localhost").searchParams.get("file") || "";
-    return filename ? `/generated-covers/${encodeURIComponent(filename)}` : imageUrl;
+    return isLocalApp && filename ? gatewayCover(filename) : (filename ? `/generated-covers/${encodeURIComponent(filename)}` : imageUrl);
   }
   try {
     const url = new URL(imageUrl);
     if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && url.port === "4318" && url.pathname.startsWith("/covers/")) {
       const filename = url.pathname.split("/").pop() || "";
-      return `/generated-covers/${encodeURIComponent(filename)}`;
+      return filename ? gatewayCover(filename) : imageUrl;
     }
   } catch {}
   return imageUrl;

@@ -18,6 +18,9 @@ const aiPaths = new Set([
   "/api/huasheng/login",
   "/api/huasheng/make",
   "/api/huasheng/task",
+  "/api/douyin/status",
+  "/api/douyin/login",
+  "/api/douyin/sync",
 ]);
 
 export function apiUrl(path: string) {

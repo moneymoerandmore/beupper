@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { downloadCover, localizeCoverUrl } from "./image-download";
-import { apiUrl } from "./api-client";
+import { apiUrl, readJsonResponse } from "./api-client";
 import { douyinPerformanceBaseline } from "./douyin-performance-baseline";
 
 const stepNames = ["选题确认", "研究底稿", "包装确认", "口播成稿", "花生成片", "数据回流"];
@@ -25,8 +25,8 @@ function reviewSimilarity(left: string, right: string) {
   return (2 * overlap) / Math.max(1, aa.size + bb.size);
 }
 
-function bindReviewsByPublishingOrder(projects: any[], links: any[], manual: Record<string, string>) {
-  const reviews = [...douyinPerformanceBaseline].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+function bindReviewsByPublishingOrder(projects: any[], links: any[], manual: Record<string, string>, sourceReviews: any[] = douyinPerformanceBaseline) {
+  const reviews = [...sourceReviews].sort((a, b) => String(b.publishedAt || "").localeCompare(String(a.publishedAt || "")));
   const projectRows = projects.map((project) => {
     const linkedTitles = links.filter((item) => item.contentId === project.id).map((item) => item.snapshot?.title).filter(Boolean);
     return { project, titles: [project.packaging?.title, project.topic, ...linkedTitles].filter(Boolean).map(String) };
@@ -73,6 +73,9 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
   const [reviewBindings, setReviewBindings] = useState<Record<string, string>>({});
   const [reviewPickerOpen, setReviewPickerOpen] = useState(false);
   const [reviewSearch, setReviewSearch] = useState("");
+  const [douyinReviews, setDouyinReviews] = useState<any[]>(douyinPerformanceBaseline);
+  const [douyinSyncing, setDouyinSyncing] = useState(false);
+  const [douyinSyncMessage, setDouyinSyncMessage] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +91,11 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       }
       let coverIndex: Record<string, any> = {};
       try {
-        const response = await fetch(`/generated-covers/index.json?t=${Date.now()}`, { cache: "no-store" });
+        const localHost = window.location.hostname === "localhost" ? "localhost" : "127.0.0.1";
+        const indexUrl = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+          ? `${window.location.protocol}//${localHost}:4318/covers/index.json?t=${Date.now()}`
+          : `/generated-covers/index.json?t=${Date.now()}`;
+        const response = await fetch(indexUrl, { cache: "no-store" });
         if (response.ok) coverIndex = await response.json();
       } catch {}
       const saved = [...byId.values()].map((project: any) => {
@@ -106,8 +113,17 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       setSelectedId(saved[0]?.id || "");
       const storedLinks = JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]");
       const manualBindings = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
-      const completedBindings = bindReviewsByPublishingOrder(saved, storedLinks, manualBindings);
+      const liveReviews = JSON.parse(window.localStorage.getItem("financial-titan-douyin-live-reviews") || "[]");
+      const reviewMap = new Map<string, any>();
+      for (const item of [...douyinPerformanceBaseline, ...liveReviews]) {
+        const key = item.platformId || `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
+        const existing = reviewMap.get(key);
+        reviewMap.set(key, existing ? { ...existing, ...item, id: existing.id } : item);
+      }
+      const mergedReviews = [...reviewMap.values()];
+      const completedBindings = bindReviewsByPublishingOrder(saved, storedLinks, manualBindings, mergedReviews);
       setLinks(storedLinks);
+      setDouyinReviews(mergedReviews);
       setReviewBindings(completedBindings);
       window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(completedBindings));
     }
@@ -117,24 +133,74 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
 
   const selected = projects.find((item) => item.id === selectedId);
   const selectedLinks = links.filter((item) => item.contentId === selectedId);
-  const autoMatchedDouyinReview = selected ? douyinPerformanceBaseline.find((item) => {
+  const autoMatchedDouyinReview = selected ? douyinReviews.find((item) => {
     const normalize = (value: string) => value.toLowerCase().replace(/[#：:，,？?！!\s]/g, "");
     const projectTitle = normalize(selected.packaging?.title || selected.topic || "");
     const performanceTitle = normalize(item.title);
     return projectTitle.length >= 8 && (performanceTitle.includes(projectTitle.slice(0, 18)) || projectTitle.includes(performanceTitle.slice(0, 18)));
   }) : undefined;
   const matchedDouyinReview = selected
-    ? douyinPerformanceBaseline.find((item) => item.id === reviewBindings[selected.id]) || autoMatchedDouyinReview
+    ? douyinReviews.find((item) => item.id === reviewBindings[selected.id]) || selected.douyinReview || autoMatchedDouyinReview
     : undefined;
-  const filteredDouyinReviews = douyinPerformanceBaseline.filter((item) => !reviewSearch.trim() || item.title.toLowerCase().includes(reviewSearch.trim().toLowerCase()));
+  const filteredDouyinReviews = douyinReviews.filter((item) => !reviewSearch.trim() || item.title.toLowerCase().includes(reviewSearch.trim().toLowerCase()));
+
+  async function syncDouyinCreator() {
+    setDouyinSyncing(true);
+    setDouyinSyncMessage("正在检测登录态并读取作品…");
+    try {
+      const response = await fetch(apiUrl("/api/douyin/sync"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const payload = await readJsonResponse(response, "抖音创作者同步");
+      if (response.status === 401 || payload.loginRequired) {
+        const loginResponse = await fetch(apiUrl("/api/douyin/login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const loginPayload = await readJsonResponse(loginResponse, "抖音登录");
+        if (!loginResponse.ok) throw new Error(loginPayload.error || "无法打开抖音登录窗口");
+        setDouyinSyncMessage("登录窗口已打开；登录完成后再点一次此按钮，即会自动抓取和匹配。 ");
+        notify("请在弹出的抖音创作者中心完成登录，然后再次点击同步");
+        return;
+      }
+      if (!response.ok) throw new Error(payload.error || "抖音创作者数据读取失败");
+      const liveReviews = Array.isArray(payload.records) ? payload.records : [];
+      const reviewMap = new Map<string, any>();
+      for (const item of [...douyinPerformanceBaseline, ...liveReviews]) {
+        const key = item.platformId || `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
+        const existing = reviewMap.get(key);
+        reviewMap.set(key, existing ? { ...existing, ...item, id: existing.id } : item);
+      }
+      const mergedReviews = [...reviewMap.values()];
+      const manual = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
+      const completed = bindReviewsByPublishingOrder(projects, links, manual, mergedReviews);
+      const nextProjects = projects.map((project) => {
+        const review = mergedReviews.find((item) => item.id === completed[project.id]);
+        return review ? { ...project, douyinReview: review, updatedAt: project.updatedAt } : project;
+      });
+      setDouyinReviews(mergedReviews);
+      setReviewBindings(completed);
+      setProjects(nextProjects);
+      window.localStorage.setItem("financial-titan-douyin-live-reviews", JSON.stringify(liveReviews));
+      window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(completed));
+      window.localStorage.setItem("financial-titan-projects", JSON.stringify(nextProjects));
+      setDouyinSyncMessage(`已读取 ${liveReviews.length} 条抖音作品，自动匹配 ${Object.keys(completed).length} 个资产项目；反馈快照已写入项目。`);
+      notify("抖音作品和资产项目已重新匹配，实际反馈数据已保存");
+    } catch (error) {
+      setDouyinSyncMessage(error instanceof Error ? error.message : "抖音同步失败");
+    } finally {
+      setDouyinSyncing(false);
+    }
+  }
 
   function bindDouyinReview(reviewId: string) {
     if (!selected) return;
+    const review = douyinReviews.find((item) => item.id === reviewId);
     const next = { ...reviewBindings, [selected.id]: reviewId };
     setReviewBindings(next);
     window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(next));
     const manual = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
     window.localStorage.setItem("financial-titan-douyin-review-manual-bindings", JSON.stringify({ ...manual, [selected.id]: reviewId }));
+    if (review) {
+      const nextProjects = projects.map((project) => project.id === selected.id ? { ...project, douyinReview: review } : project);
+      setProjects(nextProjects);
+      window.localStorage.setItem("financial-titan-projects", JSON.stringify(nextProjects));
+    }
     setReviewPickerOpen(false);
     setReviewSearch("");
     notify("抖音后台复盘数据已绑定到当前资产");
@@ -226,6 +292,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
 
   return (
     <div className="libraryLayout">
+      <div className="librarySyncBar"><div><b>抖音创作者数据同步</b><span>{douyinSyncMessage || "获取项目专属浏览器登录态，读取全部作品，并按主题与发布顺序匹配资产。人工绑定始终优先。"}</span></div><button className="primary" disabled={douyinSyncing} onClick={syncDouyinCreator}>{douyinSyncing ? "正在读取并匹配…" : "获取抖音登录态并同步"}</button></div>
       <div className="mobileProjectPicker">
         <span className="mobilePickerLabel">当前项目 · {projects.length ? `${projects.length} 个内容资产` : "暂无内容资产"}</span>
         <button className={mobilePickerOpen ? "mobilePickerTrigger open" : "mobilePickerTrigger"} onClick={() => setMobilePickerOpen((value) => !value)} aria-expanded={mobilePickerOpen} aria-haspopup="listbox">
