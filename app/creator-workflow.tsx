@@ -57,7 +57,7 @@ async function normalizeCoverReference(source: Blob) {
   }
 }
 
-function researchForTopic(currentTopic: string, context: any = {}) {
+function researchForTopic(currentTopic: string, context: any = {}, strategyProfile: any = {}) {
   const clean = currentTopic.trim() || defaultTopic;
   const text = clean.toLowerCase();
   const markets = Array.isArray(context?.markets) && context.markets.length ? context.markets : ["相关市场"];
@@ -95,6 +95,12 @@ function researchForTopic(currentTopic: string, context: any = {}) {
   ];
   return [
     {
+      key: "数据迭代", title: "抖音真实反馈形成的本轮策略", status: strategyProfile?.createdAt ? "动态生效" : "等待数据",
+      body: strategyProfile?.createdAt
+        ? `本轮基于${strategyProfile.sampleCount || 0}个已匹配投稿项目形成。选题策略：${(strategyProfile.topicDirectives || []).join("；") || "无新增"}。底稿策略：${(strategyProfile.researchDirectives || []).join("；") || "无新增"}。成稿策略：${(strategyProfile.scriptDirectives || []).join("；") || "无新增"}。这些规则是基于历史样本的可证伪假设；与当前事实证据、选题主体或合规护栏冲突时不采用。`
+        : "尚无抖音数据迭代记录，继续执行当前基础方法论；不得虚构平台反馈。",
+    },
+    {
       key: "事实底座", title: "先确认能说出口的事实", status: "必用 · 硬门",
       body: `事件：${clean}。触发点：${trigger}。当前摘要：${thesis}。扫描记录为${context?.sourceCount ?? 0}个独立来源、${context?.authorityCount ?? 0}个高可信来源、${context?.socialCount ?? 0}个社交信号。可追溯证据：${evidenceNames || "历史项目未保存原始证据，生成前必须补证"}。数字、人名、时间和政策动作只能从这些原始证据确认，评分不能当作口播事实。`,
     },
@@ -112,7 +118,7 @@ function researchForTopic(currentTopic: string, context: any = {}) {
     },
     {
       key: "前60秒", title: "开头必须完成一次完整交付", status: "四段时间验收",
-      body: `① 2秒出现异常：用“${trigger}”中最反常、最具体且可核验的结果起手，不用背景铺垫。\n② 5秒说清事件：明确说出本次主体及其最新动作或价格反应，不能只说“出大事了”。\n③ 15秒说明与股民关系：回答它会改变哪类股票、估值、盈利预期或资金选择，让普通股民知道为什么值得继续听。\n④ 60秒完成第一轮因果闭环：在约前300字内说清“发生了什么—最主要原因是什么—为什么进入股价”，即使观众只听一分钟，也应得到一个完整判断。历史29条抖音作品显示平均观看时长比封面点击率更能解释播放差异，因此这四项是独立创作单元；成稿会逐窗验收，失败则自动触发前60秒专项重写。`,
+      body: `① 2秒出现异常：用“${trigger}”中最反常、最具体且可核验的结果起手，不用背景铺垫。\n② 5秒说清事件：明确说出本次主体及其最新动作或价格反应，不能只说“出大事了”。\n③ 15秒说明与股民关系：回答它会改变哪类股票、估值、盈利预期或资金选择，让普通股民知道为什么值得继续听。\n④ 60秒完成第一轮因果闭环：在约前300字内说清“发生了什么—最主要原因是什么—为什么进入股价”，即使观众只听一分钟，也应得到一个完整判断。前60秒继续作为稳定验收框架；具体哪一段需要加强，以最新版抖音策略的真实留存数据及其样本边界为准。成稿会逐窗验收，失败则自动触发前60秒专项重写。`,
     },
     {
       key: "市场分歧", title: "先看投资者在争论什么，再决定哪里值得深挖", status: "讨论证据层",
@@ -185,6 +191,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [poeApiKey, setPoeApiKey] = useState("");
   const [poeModel, setPoeModel] = useState("gpt-image-2");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
+  const [strategyProfile, setStrategyProfile] = useState<any>({});
   const [scriptModel, setScriptModel] = useState("deepseek-v4-pro");
   const [scriptGenerating, setScriptGenerating] = useState(false);
   const [scriptWaitSeconds, setScriptWaitSeconds] = useState(0);
@@ -201,6 +208,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [coverImages, setCoverImages] = useState<{ landscape?: string; portrait?: string }>({});
   const [coverMaterial, setCoverMaterial] = useState<any>(null);
   const [coverGenerating, setCoverGenerating] = useState(false);
+  const [coverStage, setCoverStage] = useState("");
   const [coverError, setCoverError] = useState("");
   const [huashengStatus, setHuashengStatus] = useState<any>(null);
   const [huashengTask, setHuashengTask] = useState<any>(null);
@@ -212,7 +220,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [metricResult, setMetricResult] = useState<any>(null);
   const [metricLoading, setMetricLoading] = useState(false);
   const [metricError, setMetricError] = useState("");
-  const currentResearch = useMemo(() => researchForTopic(topic, topicContext), [topic, topicContext]);
+  const currentResearch = useMemo(() => researchForTopic(topic, topicContext, strategyProfile), [topic, topicContext, strategyProfile]);
   const currentPackages = packagingOptions;
   const selectedPackage = currentPackages[packageIndex] || {
     title: topic, hook: "", cover: "", type: "", motive: "", keyword: topic.slice(0, 28),
@@ -281,6 +289,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const raw = project ? JSON.stringify(project) : null;
     setPoeApiKey(window.localStorage.getItem("financial-titan-poe-key") || "");
     setDeepseekApiKey(window.localStorage.getItem("financial-titan-deepseek-key") || "");
+    try { setStrategyProfile(JSON.parse(window.localStorage.getItem("financial-titan-strategy-profile") || "{}")); } catch { setStrategyProfile({}); }
     if (!raw) { setHydrated(true); return; }
     try {
       const saved = JSON.parse(raw);
@@ -462,6 +471,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           topic,
           topicContext,
           research: currentResearch,
+          strategyProfile,
         }),
         signal: AbortSignal.timeout(600_000),
       });
@@ -516,6 +526,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           topic,
           topicContext,
           research: currentResearch,
+          strategyProfile,
           packaging: selectedPackage,
           packagingOptions: currentPackages,
           workflowContext: {
@@ -547,6 +558,22 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   }
 
   async function selectCoverMaterial() {
+    async function prepareReference(material: any) {
+      const imageResponse = await fetch(apiUrl(`/api/image-source?url=${encodeURIComponent(material.imageUrl)}&pageUrl=${encodeURIComponent(material.pageUrl || "")}`));
+      if (!imageResponse.ok) throw new Error(`参考素材下载失败（HTTP ${imageResponse.status}）`);
+      const blob = await imageResponse.blob();
+      const referenceImage = await normalizeCoverReference(blob);
+      return { material, referenceImage };
+    }
+    if (coverMaterial?.imageUrl) {
+      try {
+        setCoverStage("正在复用本项目已选参考图…");
+        return await prepareReference(coverMaterial);
+      } catch {
+        setCoverMaterial(null);
+        setCoverStage("已有参考图已失效，正在重新搜索…");
+      }
+    }
     const baiduApiKey = window.localStorage.getItem("financial-titan-baidu-key") || "";
     if (!baiduApiKey.trim()) throw new Error("请先在首页配置百度 WebSearch API Key，封面需要先搜索主题素材再做图生图。");
     const selected = currentPackages[packageIndex];
@@ -557,13 +584,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     });
     const payload = await readJsonResponse(response, "封面素材搜索");
     if (!response.ok) throw new Error(payload.error || "主题素材搜索失败");
-    const imageResponse = await fetch(apiUrl(`/api/image-source?url=${encodeURIComponent(payload.selected.imageUrl)}&pageUrl=${encodeURIComponent(payload.selected.pageUrl || "")}`));
-    if (!imageResponse.ok) throw new Error("已选主题素材无法下载，未继续生成封面。");
-    const blob = await imageResponse.blob();
-    const referenceImage = await normalizeCoverReference(blob);
     const material = { ...payload.selected, query: payload.query, requestId: payload.requestId, selectedAt: new Date().toISOString() };
     setCoverMaterial(material);
-    return { material, referenceImage };
+    return await prepareReference(material);
   }
 
   async function generateCover(format: "landscape" | "portrait", referenceImage: string) {
@@ -575,6 +598,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
     const safeAreaRules = format === "portrait"
       ? `3:4竖版建立两层不可越过的安全框。全局主体安全框：左边界16%，右边界78%，顶部16%，底部74%。更严格的文字安全框：左边界18%，右边界76%，顶部22%，底部44%。主锤字的字框、阴影、描边、辉光以及每一个笔画都必须完整落在文字安全框内，文字上方至少保留相当于一个汉字高度的空白。右侧22%、顶部20%和底部26%只能放可裁切的无关背景。文字块宽度不超过画面58%、高度不超过18%；如果字号与安全框冲突，必须缩小字号和行距，不得移动文字框越界。`
       : `4:3横版建立不可越过的中央安全框：左右、顶部和底部各留画布12%，全部文字、主体完整轮廓、脸部或核心识别特征必须位于中央76%宽、76%高的安全框内。安全框之外只能延展可裁切的无关背景、光影和纹理。文字块宽度不超过画面38%。`;
+    setCoverStage(format === "landscape" ? "正在上传参考图并生成横版封面…" : "横版已完成，正在生成竖版封面…");
     const response = await fetch(apiUrl("/api/generate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -596,15 +620,23 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   }
 
   async function generateBothCovers() {
+    let activeStage = "搜索并验证主题参考图";
     setCoverGenerating(true);
     setCoverError("");
+    setCoverStage("正在搜索并验证主题参考图…");
     try {
       const { material, referenceImage } = await selectCoverMaterial();
+      activeStage = "上传参考图并生成横版封面";
+      setCoverStage(`已选用“${material.title}”，准备上传参考图…`);
       await generateCover("landscape", referenceImage);
+      activeStage = "生成竖版封面";
       await generateCover("portrait", referenceImage);
+      setCoverStage("双画幅封面已生成并保存");
       notify(`已自动选用“${material.title}”作为主题素材，并生成双画幅封面`);
     } catch (error) {
-      setCoverError(error instanceof Error ? error.message : "封面生成失败");
+      const message = error instanceof Error ? error.message : "封面生成失败";
+      setCoverError(`${activeStage}失败：${message}`);
+      setCoverStage("");
     } finally {
       setCoverGenerating(false);
     }
@@ -848,7 +880,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
             <div className="aiCoverHeader">
               <div><p className="eyebrow">POE · GPT-IMAGE-2</p><h3>AI 双画幅封面</h3></div>
               <button className="primary" disabled={coverGenerating} onClick={generateBothCovers}>
-                {coverGenerating ? "正在生成两个画幅…" : "生成横版 + 竖版"}
+                {coverGenerating ? (coverStage || "正在生成两个画幅…") : "生成横版 + 竖版"}
               </button>
             </div>
             <div className="poeConfig">

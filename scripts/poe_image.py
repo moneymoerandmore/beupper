@@ -15,14 +15,68 @@ if PROJECT_PACKAGES.is_dir():
     sys.path.insert(0, str(PROJECT_PACKAGES))
 
 import certifi
+import fastapi_poe as fp
 import httpx
 import requests
 
 
 POE_CHAT_COMPLETIONS_URL = "https://api.poe.com/v1/chat/completions"
+POE_RESPONSES_URL = "https://api.poe.com/v1/responses"
 COVER_DIR = Path(__file__).resolve().parents[1] / "data" / "covers"
 PUBLIC_COVER_DIR = Path(__file__).resolve().parents[1] / "public" / "generated-covers"
 PUBLIC_COVER_INDEX = PUBLIC_COVER_DIR / "index.json"
+
+
+def generate_with_native_bot(api_key, model, prompt, reference_image, size):
+    print(f"[poe-image] native start model={model} size={size} reference={bool(reference_image)}", file=sys.stderr, flush=True)
+    attachments = []
+    if reference_image:
+        mime_match = re.match(r"data:([^;]+);base64,", reference_image)
+        if mime_match:
+            encoded = reference_image.split(",", 1)[1]
+            try:
+                reference_content = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError) as error:
+                raise ValueError("参考图 Data URL 无法解码，尚未发起生图") from error
+            if len(reference_content) < 1000:
+                raise ValueError("参考图文件过小或不完整，尚未发起生图")
+            mime_type = mime_match.group(1)
+            extension = mimetypes.guess_extension(mime_type) or ".jpg"
+            uploaded = fp.upload_file_sync(
+                file=reference_content,
+                file_name=f"cover-reference{extension}",
+                api_key=api_key,
+            )
+            if not getattr(uploaded, "url", None):
+                raise RuntimeError("参考图上传到 Poe 后没有返回附件地址，尚未发起生图")
+            attachments.append(uploaded)
+            print("[poe-image] reference upload complete", file=sys.stderr, flush=True)
+        else:
+            attachments.append(fp.Attachment(
+                url=reference_image,
+                content_type="image/jpeg",
+                name="cover-reference.jpg",
+            ))
+    message = fp.ProtocolMessage(
+        role="user",
+        content=prompt,
+        attachments=attachments,
+        parameters={"size": size, "quality": "high"},
+    )
+    output_attachments = []
+    text_parts = []
+    for partial in fp.get_bot_response_sync(
+        messages=[message], bot_name=model, api_key=api_key, skip_system_prompt=True,
+    ):
+        attachment = getattr(partial, "attachment", None)
+        if attachment is not None:
+            dumped = attachment.model_dump(mode="json") if hasattr(attachment, "model_dump") else vars(attachment)
+            output_attachments.append(dumped)
+        partial_text = getattr(partial, "text", None)
+        if isinstance(partial_text, str):
+            text_parts.append(partial_text)
+    print(f"[poe-image] native response complete output_attachments={len(output_attachments)}", file=sys.stderr, flush=True)
+    return {"attachments": output_attachments, "content": "".join(text_parts)}
 
 
 def emit(payload):
@@ -187,30 +241,54 @@ def generate(request_data):
 
     try:
         message_content = prompt
+        responses_content = [{"type": "input_text", "text": prompt}]
         if reference_image:
+            enriched_prompt = prompt + (f"\n\nThe only permitted human is the verified named real person: {named_person}. Preserve that person's recognizable identity from the attached source, and do not invent or add any other human." if allow_person and named_person else "\n\nThis is not a people-led topic. The final image must contain zero humans or human-like forms: no face, body, hand, silhouette, crowd, mannequin, statue, figurine, miniature person, doll, avatar, or humanoid shape. If the attached source contains any person, remove the person completely and do not preserve them. Use only the relevant non-human object, environment, material, or market tension from the source.") + "\n\nRebuild lighting, background, composition and typography as instructed. Do not merely place a filter over the source."
             message_content = [
-                {"type": "text", "text": prompt + (f"\n\nThe only permitted human is the verified named real person: {named_person}. Preserve that person's recognizable identity from the attached source, and do not invent or add any other human." if allow_person and named_person else "\n\nThis is not a people-led topic. The final image must contain zero humans or human-like forms: no face, body, hand, silhouette, crowd, mannequin, statue, figurine, miniature person, doll, avatar, or humanoid shape. If the attached source contains any person, remove the person completely and do not preserve them. Use only the relevant non-human object, environment, material, or market tension from the source.") + "\n\nRebuild lighting, background, composition and typography as instructed. Do not merely place a filter over the source."},
+                {"type": "text", "text": enriched_prompt},
                 {"type": "image_url", "image_url": {"url": reference_image}},
             ]
-        with requests.Session() as client:
+            responses_content = [
+                {"type": "input_text", "text": enriched_prompt},
+                {"type": "input_image", "image_url": reference_image},
+            ]
+        size = "1536x1024" if cover_format == "landscape" else "1024x1536"
+        if model.lower() == "gpt-image-2":
+            payload = generate_with_native_bot(api_key, model, enriched_prompt if reference_image else prompt, reference_image, size)
+            request_id = ""
+        else:
+          with requests.Session() as client:
             client.trust_env = False
-            with client.post(
-                POE_CHAT_COMPLETIONS_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "User-Agent": "FinancialTitanCover/1.0",
-                },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": message_content}],
-                    "stream": True,
-                },
-                stream=True,
-                timeout=(25, 360),
-                verify=certifi.where(),
-            ) as response:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "FinancialTitanCover/1.0",
+                "Connection": "close",
+            }
+            body = {
+                "model": model,
+                "input": [{"role": "user", "content": responses_content}],
+                "stream": False,
+                "size": size,
+                "quality": "high",
+            }
+            response = None
+            for connect_attempt in range(3):
+                try:
+                    response = client.post(
+                        POE_RESPONSES_URL, headers=headers, json=body, stream=False,
+                        timeout=(45, 360), verify=certifi.where(),
+                    )
+                    break
+                except requests.exceptions.ConnectTimeout:
+                    # No connection means Poe never received the paid generation request.
+                    if connect_attempt == 2:
+                        raise
+                    time.sleep(1.5 * (connect_attempt + 1))
+            if response is None:
+                raise requests.exceptions.ConnectTimeout("Poe connection was not established")
+            with response:
                 request_id = response.headers.get("x-request-id") or response.headers.get("cf-ray") or ""
                 if not response.ok:
                     raw_error = response.text
@@ -232,19 +310,29 @@ def generate(request_data):
                         "requestId": request_id,
                         "error": f"Poe {response.status_code}：{str(message or raw_error[:600] or 'Poe 未返回错误正文')}",
                     }
-                class TextLineResponse:
-                    def iter_lines(self):
-                        return response.iter_lines(decode_unicode=True)
-
-                payload = read_streamed_completion(TextLineResponse())
+                try:
+                    payload = response.json()
+                except ValueError:
+                    return {
+                        "ok": False,
+                        "status": 502,
+                        "requestId": request_id,
+                        "error": "Poe 已返回成功状态，但响应不是有效 JSON；本次不会自动重试。",
+                    }
+    except fp.BotError as error:
+        return {"ok": False, "status": 502, "error": f"Poe 原生 Bot 调用失败：{type(error).__name__}: {error}"}
+    except ValueError as error:
+        return {"ok": False, "status": 400, "error": str(error)}
+    except RuntimeError as error:
+        return {"ok": False, "status": 502, "error": str(error)}
     except requests.exceptions.ReadTimeout:
         return {
             "ok": False,
             "status": 504,
-            "error": "Poe 图片生成超过 6 分钟仍未返回。为避免重复扣费，本次没有自动重试；请稍后单独重新生成失败的画幅。",
+            "error": "Poe Responses 图片生成超过 6 分钟仍未返回。为避免重复扣费，本次没有自动重试；请稍后单独重新生成失败的画幅。",
         }
     except requests.exceptions.ConnectTimeout:
-        return {"ok": False, "status": 504, "error": "连接 Poe 超时，请检查网络后重试。"}
+        return {"ok": False, "status": 504, "error": "连续3次都未能与 Poe 建立连接；这些尝试均发生在请求送达前，不会产生图片费用。请检查 VPN 节点或网络后重试。"}
     except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as error:
         return {"ok": False, "status": 502, "error": f"Poe 在返回结果前断开连接。为避免重复扣费，系统没有自动重试本次生图请求；请稍后只重试失败画幅。底层错误：{error}"}
     except requests.exceptions.RequestException as error:

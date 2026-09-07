@@ -68,15 +68,27 @@ function parseJson(text: string) {
 
 async function deepSeekJson(apiKey: string, messages: any[]) {
   async function requestJson(requestMessages: any[]) {
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(90_000),
-      body: JSON.stringify({
-        model: "deepseek-v4-flash", messages: requestMessages, thinking: { type: "disabled" },
-        response_format: { type: "json_object" }, max_tokens: 20000,
-      }),
-    });
+    let response: Response | null = null;
+    let lastNetworkError = "";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(90_000),
+          body: JSON.stringify({
+            model: "deepseek-v4-flash", messages: requestMessages, thinking: { type: "disabled" },
+            response_format: { type: "json_object" }, max_tokens: 20000,
+          }),
+        });
+        if (response.status < 500) break;
+        lastNetworkError = `HTTP ${response.status}`;
+      } catch (error) {
+        lastNetworkError = error instanceof Error ? error.message : String(error);
+      }
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+    if (!response) throw new Error(`DeepSeek事件理解网络请求失败：${lastNetworkError || "连接未建立"}`);
     const text = await response.text();
     let payload: any = {};
     try { payload = text ? JSON.parse(text) : {}; } catch {}
@@ -190,7 +202,7 @@ export async function deriveCorporateReleaseFollowUpQueries(apiKey: string, refe
   return { queries: [...new Set(queries)].slice(0, 18), companies, receipt: result.receipt };
 }
 
-export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
+export async function buildCausalAnalysisTopics(apiKey: string, events: any[], strategyProfile: any = {}, stableTopicSkill = "") {
   if (!events.length) return { topics: [], receipt: "" };
   const compactEvents = events.slice(0, 60).map((event) => ({
     eventId: event.id || event.eventId, title: event.title, summary: event.summary || event.thesis,
@@ -210,7 +222,7 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[]) {
 
 只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0,"searchDemand":0,"stakeholderConflict":0,"entitySpecificity":0,"timelinessOpportunity":0,"discoveryLane":"search|recommendation|dual"}]}。所有分数0到100，最多输出18个互不重复的分析命题。`;
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: `${system}\n公司财报、业绩预告、经营指引或资本开支更新属于公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：盈利预期发生了什么变化、估值锚如何移动、盘后或次日价格是否充分反映、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司财报改写成行业趋势。` },
+    { role: "system", content: `${system}\n公司财报、业绩预告、经营指引或资本开支更新属于公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：盈利预期发生了什么变化、估值锚如何移动、盘后或次日价格是否充分反映、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司财报改写成行业趋势。\n\n以下是当前稳定选题Skill：${stableTopicSkill}\n\n以下是抖音真实数据形成的最新选题策略，只能在事实、时效和证据硬门之后影响选题构造与排序倾向，不能创造新闻或覆盖事件重要性：${JSON.stringify(strategyProfile?.topicDirectives || [])}` },
     { role: "user", content: `北京时间${new Date().toISOString()}。从以下事件全集构建因果分析型选题：${JSON.stringify(compactEvents)}` },
   ]);
   const list = (value: any) => Array.isArray(value) ? [...new Set(value.map(String).filter(Boolean))] : [];

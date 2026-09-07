@@ -17,19 +17,20 @@ export function localizeCoverUrl(imageUrl: string) {
   const isLocalApp = browserHost === "localhost" || browserHost === "127.0.0.1";
   const gatewayHost = browserHost === "localhost" ? "localhost" : "127.0.0.1";
   const gatewayCover = (filename: string) => `${typeof window !== "undefined" ? window.location.protocol : "http:"}//${gatewayHost}:4318/covers/${encodeURIComponent(filename)}`;
+  const sameOriginCover = (filename: string) => `/api/generated-cover?file=${encodeURIComponent(filename)}`;
   if (imageUrl.startsWith("/generated-covers/")) {
     const filename = imageUrl.split("/").pop() || "";
-    return isLocalApp && filename ? gatewayCover(filename) : imageUrl;
+    return isLocalApp && filename ? sameOriginCover(filename) : imageUrl;
   }
   if (imageUrl.startsWith("/api/generated-cover?")) {
     const filename = new URL(imageUrl, "http://localhost").searchParams.get("file") || "";
-    return isLocalApp && filename ? gatewayCover(filename) : (filename ? `/generated-covers/${encodeURIComponent(filename)}` : imageUrl);
+    return isLocalApp && filename ? sameOriginCover(filename) : (filename ? `/generated-covers/${encodeURIComponent(filename)}` : imageUrl);
   }
   try {
     const url = new URL(imageUrl);
     if ((url.hostname === "127.0.0.1" || url.hostname === "localhost") && url.port === "4318" && url.pathname.startsWith("/covers/")) {
       const filename = url.pathname.split("/").pop() || "";
-      return filename ? gatewayCover(filename) : imageUrl;
+      return isLocalApp && filename ? sameOriginCover(filename) : (filename ? gatewayCover(filename) : imageUrl);
     }
   } catch {}
   return imageUrl;
@@ -37,7 +38,10 @@ export function localizeCoverUrl(imageUrl: string) {
 
 export async function downloadCover(imageUrl: string, format: "png" | "jpg", name: string) {
   const localized = localizeCoverUrl(imageUrl);
-  const source = localized.startsWith("data:") || localized.startsWith("/generated-covers/") || isLocalGeneratedCover(localized)
+  const source = localized.startsWith("data:")
+    || localized.startsWith("/generated-covers/")
+    || localized.startsWith("/api/generated-cover?")
+    || isLocalGeneratedCover(localized)
     ? localized
     : apiUrl(`/api/image-source?url=${encodeURIComponent(localized)}`);
   const response = await fetch(source);

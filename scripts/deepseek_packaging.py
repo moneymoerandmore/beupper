@@ -10,15 +10,11 @@ import openai
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "package-financial-video" / "SKILL.md"
-PACKAGING_SKILL = SKILL_PATH.read_text(encoding="utf-8")
-
-
 SYSTEM = """你是“金融巨子”的财经视频包装总编。你的工作不是写正文，而是从当前实时热点的完整证据中，生成三套真正属于这一次事件的标题、Hook、封面文案与视觉方向。禁止调用历史题目模板，禁止把同属外汇、科技或政策类别的旧事件替换进来。
 
 事实只能来自输入。标题可以有张力，但不得发明数字、人物动作、政策因果或价格表现。输出必须是一个可解析JSON对象，不要Markdown、解释、前后缀或代码围栏。
 
-严格执行以下Skill：
-""" + PACKAGING_SKILL
+严格执行本次请求附带的当前Skill。"""
 
 
 REQUIRED_TEXT_FIELDS = ("title", "hook", "cover", "type", "motive", "keyword", "conflict", "coverMode", "visual", "visualSubjectType")
@@ -27,7 +23,7 @@ REQUIRED_TEXT_FIELDS = ("title", "hook", "cover", "type", "motive", "keyword", "
 SYSTEM += """
 财报包装遵循公司优先原则：单一上市公司的财报、业绩预告、经营指引或资本开支更新，标题、Hook和封面必须首先回答这家公司未来股价怎么看。优先呈现盈利预期差、指引变化、估值锚、财报后价格反应和下一验证信号。行业、供应链与跨市场影响只能是第二层，不能取代本股成为主题；除非证据明确显示多家公司同步变化或行业盈利预测普遍修正，才可升级为行业主线。
 
-后台实证约束：历史29条抖音作品显示，播放量与平均观看秒数明显同向，而与后台封面点击率几乎无关。包装必须先服务前60秒兑现，不得只追求封面刺激。搜索型题目保留准确实体、新动作和数字；推荐型题目突出普通股民能立刻理解的利益冲突；双引擎题同时满足。禁止复用“黄金坑还是豪赌”“下一步看什么”“三个信号”等空模板，除非后半句已经点明本事件独有的验证变量。
+后台实证约束：包装必须先服务前60秒兑现，不得只追求封面刺激。搜索型题目保留准确实体、新动作和数字；推荐型题目突出普通股民能立刻理解的利益冲突；双引擎题同时满足。封面点击率不能在没有同口径可比证据时被当作抖音推荐流表现的解释变量。禁止复用“黄金坑还是豪赌”“下一步看什么”“三个信号”等空模板，除非后半句已经点明本事件独有的验证变量。具体效果判断以输入中的最新版抖音策略及其数据边界为准。
 """
 
 def parse_json(text):
@@ -81,6 +77,7 @@ def generate_packaging(request_data):
     topic = str(request_data.get("topic", "")).strip()
     context = request_data.get("topicContext") or {}
     research = request_data.get("research") or []
+    strategy = request_data.get("strategyProfile") or {}
     if not api_key or not topic:
         return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key 或当前实时选题。"}
 
@@ -90,6 +87,13 @@ def generate_packaging(request_data):
         "selectedTopic": topic,
         "topicContext": context,
         "researchBrief": research,
+        "latestDouyinStrategy": {
+            "dataBoundary": strategy.get("dataBoundary", ""),
+            "topicDirectives": strategy.get("topicDirectives", []),
+            "researchDirectives": strategy.get("researchDirectives", []),
+            "scriptDirectives": strategy.get("scriptDirectives", []),
+            "avoid": strategy.get("avoid", []),
+        },
         "delivery": "生成三套差异化包装，不写口播正文",
     }, ensure_ascii=False, indent=2)
     try:
@@ -99,8 +103,9 @@ def generate_packaging(request_data):
             timeout=httpx.Timeout(240.0, connect=30.0),
             max_retries=2,
         )
+        current_skill = SKILL_PATH.read_text(encoding="utf-8") if SKILL_PATH.is_file() else ""
         messages = [
-            {"role": "system", "content": SYSTEM},
+            {"role": "system", "content": SYSTEM + "\n\n以下是当前生效的包装Skill：\n" + current_skill},
             {"role": "user", "content": brief},
         ]
         last_error = ""

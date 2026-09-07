@@ -156,6 +156,10 @@ export async function POST(request: Request) {
     }, { status: 404 });
     return Response.json({ ok: true, query, requestId: result.requestId, selected, candidateCount: unique.length, diagnostics: { referenceCount: result.references.length, rawImageCount: rawCandidates.length, personRejected, attempted } });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "主题素材搜索失败。" }, { status: 502 });
+    const detail = error instanceof Error ? error.message : "主题素材搜索失败。";
+    const message = /fetch failed|network|socket|timed?\s*out/i.test(detail)
+      ? `百度图片搜索网络连接失败，尚未进入生图阶段。请稍后重试；已有参考图的项目会直接复用，不再重复搜索。底层错误：${detail}`
+      : detail;
+    return Response.json({ error: message }, { status: 502 });
   }
 }

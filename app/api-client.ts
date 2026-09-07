@@ -12,6 +12,8 @@ const aiPaths = new Set([
   "/api/generate",
   "/api/generate-packaging",
   "/api/generate-script",
+  "/api/strategy-iterate",
+  "/api/strategy-promote",
   "/api/social-search",
   "/api/social-login",
   "/api/huasheng/status",

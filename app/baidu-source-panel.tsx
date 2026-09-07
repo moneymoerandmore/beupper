@@ -84,7 +84,10 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
       const response = await fetch(apiUrl("/api/baidu-websearch"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, deepseekApiKey, action }),
+        body: JSON.stringify({
+          apiKey, deepseekApiKey, action,
+          strategyProfile: JSON.parse(window.localStorage.getItem("financial-titan-strategy-profile") || "{}"),
+        }),
         signal: AbortSignal.timeout(action === "scan" ? 360_000 : 40_000),
       });
       const payload = await response.json();

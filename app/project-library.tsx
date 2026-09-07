@@ -116,9 +116,9 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       const liveReviews = JSON.parse(window.localStorage.getItem("financial-titan-douyin-live-reviews") || "[]");
       const reviewMap = new Map<string, any>();
       for (const item of [...douyinPerformanceBaseline, ...liveReviews]) {
-        const key = item.platformId || `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
+        const key = `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
         const existing = reviewMap.get(key);
-        reviewMap.set(key, existing ? { ...existing, ...item, id: existing.id } : item);
+        reviewMap.set(key, existing ? { ...existing, ...item, id: item.id || existing.id } : item);
       }
       const mergedReviews = [...reviewMap.values()];
       const completedBindings = bindReviewsByPublishingOrder(saved, storedLinks, manualBindings, mergedReviews);
@@ -162,9 +162,9 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       const liveReviews = Array.isArray(payload.records) ? payload.records : [];
       const reviewMap = new Map<string, any>();
       for (const item of [...douyinPerformanceBaseline, ...liveReviews]) {
-        const key = item.platformId || `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
+        const key = `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
         const existing = reviewMap.get(key);
-        reviewMap.set(key, existing ? { ...existing, ...item, id: existing.id } : item);
+        reviewMap.set(key, existing ? { ...existing, ...item, id: item.id || existing.id } : item);
       }
       const mergedReviews = [...reviewMap.values()];
       const manual = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
@@ -177,11 +177,61 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       setReviewBindings(completed);
       setProjects(nextProjects);
       window.localStorage.setItem("financial-titan-douyin-live-reviews", JSON.stringify(liveReviews));
+      window.dispatchEvent(new Event("financial-titan-douyin-reviews-updated"));
       window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(completed));
       window.localStorage.setItem("financial-titan-projects", JSON.stringify(nextProjects));
       const detailedCount = liveReviews.filter((item) => item.detailCollected).length;
-      setDouyinSyncMessage(`已读取 ${liveReviews.length} 条作品，其中 ${detailedCount} 条取得逐稿留存明细；自动匹配 ${Object.keys(completed).length} 个资产项目并写入反馈快照。${payload.detailComplete ? "" : " 本次数据中心明细未完整返回，可稍后再次同步。"}`);
-      notify(payload.detailComplete ? "抖音逐稿详细数据已保存到对应资产" : "作品列表已保存，但逐稿留存明细未完整返回");
+      const baseMessage = `已读取 ${liveReviews.length} 条作品，其中 ${detailedCount} 条取得逐稿留存明细；自动匹配 ${Object.keys(completed).length} 个资产项目并写入反馈快照。${payload.detailComplete ? "" : " 本次数据中心明细未完整返回，可稍后再次同步。"}`;
+      const deepseekApiKey = window.localStorage.getItem("financial-titan-deepseek-key") || "";
+      const learningRecords = nextProjects.flatMap((project) => {
+        const review = project.douyinReview;
+        if (!review) return [];
+        return [{
+          projectId: project.id,
+          topic: project.topic || "",
+          title: project.packaging?.title || review.title || "",
+          hook: project.packaging?.hook || "",
+          coreConflict: project.packaging?.conflict || "",
+          research: (project.research || []).map((item: any) => ({ key: item.key, title: item.title, body: String(item.body || "").slice(0, 700) })),
+          scriptOpening: String(project.script || "").slice(0, 1200),
+          scriptLength: String(project.script || "").length,
+          performance: review,
+        }];
+      });
+      if (deepseekApiKey && learningRecords.length) {
+        try {
+          setDouyinSyncMessage(`${baseMessage} 正在用 DeepSeek 生成本轮策略迭代…`);
+          const previousStrategy = JSON.parse(window.localStorage.getItem("financial-titan-strategy-profile") || "{}");
+          const strategyHistory = JSON.parse(window.localStorage.getItem("financial-titan-strategy-iterations") || "[]");
+          const strategyResponse = await fetch(apiUrl("/api/strategy-iterate"), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ apiKey: deepseekApiKey, model: "deepseek-v4-pro", records: learningRecords, previousStrategy, strategyHistory }),
+            signal: AbortSignal.timeout(300_000),
+          });
+          const strategyPayload = await readJsonResponse(strategyResponse, "策略迭代");
+          if (!strategyResponse.ok || !strategyPayload.ok) throw new Error(strategyPayload.error || "DeepSeek 策略迭代失败");
+          const iteration = strategyPayload.iteration;
+          const history = JSON.parse(window.localStorage.getItem("financial-titan-strategy-iterations") || "[]");
+          window.localStorage.setItem("financial-titan-strategy-iterations", JSON.stringify([iteration, ...history].slice(0, 50)));
+          const existingCandidates = JSON.parse(window.localStorage.getItem("financial-titan-promotion-candidates") || "[]");
+          const candidateMap = new Map(existingCandidates.map((item: any) => [item.id, item]));
+          for (const candidate of strategyPayload.promotionCandidates || []) {
+            const existing = candidateMap.get(candidate.id) as any;
+            if (!existing || existing.status === "pending") candidateMap.set(candidate.id, { ...candidate, discoveredAt: iteration.createdAt });
+          }
+          window.localStorage.setItem("financial-titan-promotion-candidates", JSON.stringify([...candidateMap.values()]));
+          window.localStorage.setItem("financial-titan-strategy-profile", JSON.stringify(iteration));
+          window.dispatchEvent(new Event("financial-titan-strategy-updated"));
+          setDouyinSyncMessage(`${baseMessage} DeepSeek 已基于 ${iteration.sampleCount} 个匹配项目生成新策略，并注入选题、底稿和成稿。`);
+          notify("抖音数据已保存，新一轮内容策略已生效");
+        } catch (strategyError) {
+          setDouyinSyncMessage(`${baseMessage} 数据已安全保存；本轮策略迭代失败：${strategyError instanceof Error ? strategyError.message : "未知错误"}`);
+          notify("抖音数据已保存，但本轮 DeepSeek 策略复盘未完成");
+        }
+      } else {
+        setDouyinSyncMessage(`${baseMessage}${deepseekApiKey ? " 当前没有可用于学习的匹配项目。" : " 配置 DeepSeek Key 后，下次同步将自动生成策略迭代。"}`);
+        notify(payload.detailComplete ? "抖音逐稿详细数据已保存到对应资产" : "作品列表已保存，但逐稿留存明细未完整返回");
+      }
     } catch (error) {
       setDouyinSyncMessage(error instanceof Error ? error.message : "抖音同步失败");
     } finally {

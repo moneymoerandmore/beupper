@@ -12,9 +12,6 @@ import httpx
 
 
 WRITING_SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "write-financial-video-script" / "SKILL.md"
-WRITING_SKILL = WRITING_SKILL_PATH.read_text(encoding="utf-8") if WRITING_SKILL_PATH.is_file() else ""
-
-
 WRITER_SYSTEM = """你是“金融巨子”的首席财经视频作者。你写的不是财经文章、研究报告或视频文案提纲，而是一个真正懂市场的人，坐在镜头前，把一件复杂财经事件讲成观众愿意一路听完的故事。每个字都必须是人会真的说出口的话。
 
 严格执行 peanutcut-creator 的文稿方法：写前先在内部确定唯一核心判断、受众情绪弧线和4至6个留存单元，但不要输出规划。创作底稿只是幕后决策与可选弹药，不是正文目录；事实护栏必须遵守，其余卡片可以取舍，严禁按卡片顺序报菜名。全文只讲透一个核心概念，常识必须加深一层或删除。数字必须有来源和可感知的比较；没有可靠出处的数字、人名、历史案例和大师观点不得编造。必须有一个敢下判断的“我”，但要区分事实、推断和验证条件，不给个股买卖建议。
@@ -88,15 +85,6 @@ PERFORMANCE_LEARNING = """
 WRITER_SYSTEM += PERFORMANCE_LEARNING
 REVIEWER_SYSTEM += PERFORMANCE_LEARNING
 FINALIZER_SYSTEM += PERFORMANCE_LEARNING
-
-# Keep the reusable writing skill as the final authority shared by the writer,
-# reviewer and repair pass. Updating the skill therefore changes real output,
-# instead of leaving methodology in documentation that the model never sees.
-if WRITING_SKILL:
-    WRITER_SYSTEM += "\n\n以下是本项目当前生效的口播稿 Skill，逐条执行：\n" + WRITING_SKILL
-    REVIEWER_SYSTEM += "\n\n以下是本项目当前生效的口播稿 Skill，逐条终审：\n" + WRITING_SKILL
-    FINALIZER_SYSTEM += "\n\n以下是本项目当前生效的口播稿 Skill，逐条修复：\n" + WRITING_SKILL
-
 
 def extract_script(text):
     match = re.search(r"<口播正文>\s*(.*?)\s*</口播正文>", text, re.S)
@@ -371,6 +359,7 @@ def generate_script(request_data):
     topic_context = dict(request_data.get("topicContext") or {})
     packaging_options = request_data.get("packagingOptions") or []
     workflow_context = request_data.get("workflowContext") or {}
+    strategy = request_data.get("strategyProfile") or {}
     if not api_key or not topic or not isinstance(research, list):
         return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key、选题或研究底稿。"}
 
@@ -423,6 +412,9 @@ def generate_script(request_data):
         "【账号与交付目标】\n"
         "账号：金融巨子。目标受众是关注A股、港股、美股、外汇、债券和大宗商品联动的中文投资者。内容必须提供观点和判断，不荐股。\n"
         f"工作流要求：\n{workflow_brief}\n\n"
+        "【抖音真实数据形成的最新迭代策略】\n"
+        "它是历史样本产生的可证伪策略，不是事实来源。只采用与本题证据和包装承诺相容的部分，不能为了迎合历史爆款改变当前事件主体，也不能引用后台数据给观众。\n"
+        f"{json.dumps({'dataBoundary': strategy.get('dataBoundary', ''), 'researchDirectives': strategy.get('researchDirectives', []), 'scriptDirectives': strategy.get('scriptDirectives', []), 'avoid': strategy.get('avoid', [])}, ensure_ascii=False, indent=2)}\n\n"
         "【已经锁定的选题】\n"
         f"{topic}\n\n"
         "【热点扫描保留下来的原始事件上下文】\n"
@@ -452,18 +444,22 @@ def generate_script(request_data):
         "【动态创作底稿】\n"
         "这些卡片分为事实硬门、写前决策和可选弹药，不是文章结构，也不要求全部使用。只选能被原始事件上下文支持、且真正服务于唯一核心判断的内容；任何空泛、错配、矛盾、重复或无来源内容必须舍弃。\n"
         f"{evidence}\n\n"
-        "约束发生冲突时，依次服从可核验事实与安全边界、当前选题、当前包装承诺、当前动态研究底稿、当前写稿Skill、通用叙事习惯。旧模板、默认案例、固定时间线、固定段数和通用跨市场要求不得覆盖当前底稿。写作前必须在内部完成：从原始证据确认事件主体和时间，选择唯一核心判断；仅在主题确有跨市场关联时确定传导链及其成立条件；核对标题承诺。然后直接写成篇口播，不要把上述内部工作输出。"
+        "约束发生冲突时，依次服从可核验事实与安全边界、当前选题、当前包装承诺、当前写稿Skill中的合规/事实/输出协议硬规则、当前动态研究底稿的本题判断、抖音数据形成的动态策略、通用叙事习惯。动态策略只优化选题偏好、信息顺序、Hook和叙事实验，不能推翻事实核验、禁止荐股、纯口播输出、长度范围、当前事件主体和标题承诺。旧模板、默认案例、固定时间线、固定段数和通用跨市场要求不得覆盖当前底稿。写作前必须在内部完成：从原始证据确认事件主体和时间，选择唯一核心判断；仅在主题确有跨市场关联时确定传导链及其成立条件；核对标题承诺。然后直接写成篇口播，不要把上述内部工作输出。"
     )
     try:
         receipts = []
+        current_skill = WRITING_SKILL_PATH.read_text(encoding="utf-8") if WRITING_SKILL_PATH.is_file() else ""
+        writer_system = WRITER_SYSTEM + "\n\n以下是本项目当前生效的口播稿 Skill，逐条执行：\n" + current_skill
+        reviewer_system = REVIEWER_SYSTEM + "\n\n以下是本项目当前生效的口播稿 Skill，逐条终审：\n" + current_skill
+        finalizer_system = FINALIZER_SYSTEM + "\n\n以下是本项目当前生效的口播稿 Skill，逐条修复：\n" + current_skill
         client = openai.OpenAI(
             api_key=api_key,
             base_url="https://api.deepseek.com",
             timeout=httpx.Timeout(240.0, connect=30.0),
             max_retries=2,
         )
-        draft = completion(client, model, WRITER_SYSTEM, brief, receipts)
-        final_script = completion(client, model, REVIEWER_SYSTEM, f"{brief}\n\n主笔草稿：\n{draft}", receipts)
+        draft = completion(client, model, writer_system, brief, receipts)
+        final_script = completion(client, model, reviewer_system, f"{brief}\n\n主笔草稿：\n{draft}", receipts)
         final_script = ensure_closing_cta(normalize_oral_paragraphs(extract_script(final_script)))
         stages = ["主笔创作", "独立终审重写"]
         opening_problems = opening_performance_problems(final_script)
@@ -473,7 +469,7 @@ def generate_script(request_data):
                 "【前60秒独立验收未通过】\n- " + "\n- ".join(opening_problems) +
                 "\n请重写完整正文，尤其重做开头。按约每秒4个汉字验收：前12字内出现具体异常，前28字内说清主体的新动作或价格反应，前80字内说明与普通股民或资产价格的关系，前300字内完成事件—原因—股价影响的第一轮闭环。不要只在原稿前面机械补四句话。"
             )
-            final_script = completion(client, model, FINALIZER_SYSTEM, repair_brief, receipts)
+            final_script = completion(client, model, finalizer_system, repair_brief, receipts)
             final_script = ensure_closing_cta(normalize_oral_paragraphs(extract_script(final_script)))
             stages.append("前60秒专项修复")
         problems = opening_performance_problems(final_script) + delivery_problems(final_script) + factual_number_problems(final_script, topic_context) + community_usage_problems(final_script)

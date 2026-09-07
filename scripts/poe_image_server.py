@@ -13,6 +13,8 @@ if PROJECT_PACKAGES.is_dir():
 from poe_image import generate
 from poe_script import generate_script
 from deepseek_packaging import generate_packaging
+from strategy_iteration import generate_strategy_iteration
+from skill_promotion import promote_skill_rule
 from social_sources import collect_social_sources, open_social_login, social_login_status
 from huasheng_cli import VIDEO_DIR, auth_status as huasheng_auth_status, start_login as huasheng_start_login, start_make as huasheng_start_make, task_status as huasheng_task_status
 from douyin_creator import login_status as douyin_login_status, open_login as douyin_open_login, sync_creator_data as douyin_sync_creator_data
@@ -95,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.removeprefix("/api")
-        if route not in ("/generate", "/generate-script", "/generate-packaging", "/social-search", "/social-login", "/huasheng/login", "/huasheng/make", "/douyin/login", "/douyin/sync"):
+        if route not in ("/generate", "/generate-script", "/generate-packaging", "/strategy-iterate", "/strategy-promote", "/social-search", "/social-login", "/huasheng/login", "/huasheng/make", "/douyin/login", "/douyin/sync"):
             self.send_json(404, {"error": "Not found"})
             return
         try:
@@ -118,6 +120,10 @@ class Handler(BaseHTTPRequestHandler):
                 result = generate_script(request_data)
             elif route == "/generate-packaging":
                 result = generate_packaging(request_data)
+            elif route == "/strategy-iterate":
+                result = generate_strategy_iteration(request_data)
+            elif route == "/strategy-promote":
+                result = promote_skill_rule(request_data)
             else:
                 result = generate(request_data)
             status = 200 if result.get("ok") else int(result.get("status", 502))

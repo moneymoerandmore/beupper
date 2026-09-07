@@ -1,7 +1,9 @@
 import { discoveryQueries } from "../../topic-taxonomy";
 import { buildCausalAnalysisTopics, deriveCorporateReleaseFollowUpQueries, deriveMarketFollowUpQueries, scoreCausalAnalysisTopic, scoreSemanticEvent, standardizeFinancialEvents } from "../../hotspot-semantic";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|investor\.|\/ir(?:\/|-)|gcs-web|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
 const socialPattern = /twitter|weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
@@ -140,15 +142,21 @@ async function search(apiKey: string, query: string, topK = 10) {
   const headerNames = cleanKey.startsWith("bce-v3/") ? ["Authorization"] : ["X-Appbuilder-Authorization", "Authorization"];
   let lastError = "";
   for (const headerName of headerNames) {
-    const response = await fetch("https://qianfan.baidubce.com/v2/ai_search/web_search", {
-      method: "POST", headers: { [headerName]: `Bearer ${cleanKey}`, "Content-Type": "application/json" }, body,
-      signal: AbortSignal.timeout(25_000),
-    });
+    let response: Response;
+    try {
+      response = await fetch("https://qianfan.baidubce.com/v2/ai_search/web_search", {
+        method: "POST", headers: { [headerName]: `Bearer ${cleanKey}`, "Content-Type": "application/json" }, body,
+        signal: AbortSignal.timeout(45_000),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`百度 WebSearch 网络请求失败：${detail}`);
+    }
     const text = await response.text();
     let payload: any = {};
     try { payload = text ? JSON.parse(text) : {}; } catch {}
     if (response.ok && !payload.code) return { query, requestId: payload.request_id, references: payload.references || payload.data || [] };
-    lastError = `千帆 V2 Key 请求失败：${payload.message || payload.error?.message || text.slice(0, 300) || response.status}`;
+    lastError = `千帆 V2 Key 请求失败（HTTP ${response.status}）：${payload.message || payload.error?.message || text.slice(0, 300) || response.status}`;
     if (![401, 403].includes(response.status)) break;
   }
   throw new Error(lastError);
@@ -161,8 +169,9 @@ async function throttledSearch(apiKey: string, query: string, previousRequestAt 
     try { return { result: await search(apiKey, query, topK), requestedAt: Date.now() }; }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!/qps|rate.?limit|429|too many|频率|并发/i.test(message) || attempt === 2) throw error;
-      await sleep(3000 * (attempt + 1));
+      const transient = /qps|rate.?limit|429|too many|频率|并发|fetch failed|network|socket|timed?\s*out|abort|HTTP 5\d\d|连接|网络请求失败/i.test(message);
+      if (!transient || attempt === 2) throw error;
+      await sleep(2500 * (attempt + 1));
     }
   }
   throw new Error("百度搜索请求未完成");
@@ -195,7 +204,7 @@ function formatReference(reference: any, batch: any, batchIndex: number, referen
 
 export async function POST(request: Request) {
   try {
-    const { apiKey, deepseekApiKey, xueqiuCookie = "", twitterAuthToken = "", twitterCt0 = "", action = "test" } = await request.json();
+    const { apiKey, deepseekApiKey, strategyProfile = {}, xueqiuCookie = "", twitterAuthToken = "", twitterCt0 = "", action = "test" } = await request.json();
     if (!apiKey) return Response.json({ error: "请填写百度 WebSearch API Key。" }, { status: 400 });
     if (action === "test") {
       const result = await search(apiKey, "今日全球资本市场热点", 3);
@@ -203,11 +212,17 @@ export async function POST(request: Request) {
     }
     if (!deepseekApiKey) return Response.json({ error: "请填写 DeepSeek API Key，用于动态实体、动作提取与事件标准化。" }, { status: 400 });
 
-    const baseQueries = buildScanQueries(); const batches: any[] = []; let previousRequestAt = 0;
+    const baseQueries = buildScanQueries(); const batches: any[] = []; const failedQueries: any[] = []; let previousRequestAt = 0;
     for (const query of baseQueries) {
       const calendarQuery = /财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(query);
-      const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
+      try {
+        const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
+      } catch (error) {
+        previousRequestAt = Date.now();
+        failedQueries.push({ stage: "基础召回", query, error: error instanceof Error ? error.message : String(error) });
+      }
     }
+    if (!batches.length) throw new Error(`百度 WebSearch 的 ${baseQueries.length} 组基础查询全部失败：${failedQueries[0]?.error || "未知网络错误"}`);
     const firstPass = batches.flatMap((batch, batchIndex) => batch.references.map((reference: any, index: number) => formatReference(reference, batch, batchIndex, index)));
     const firstPassSeeds = firstPass.filter((item) => isFreshReference(item) || isCorporateCalendarSeed(item));
     const firstPassSemantic = firstPassSeeds.map((item: any) => ({
@@ -222,7 +237,12 @@ export async function POST(request: Request) {
     ]);
     const allFollowUpQueries: string[] = [...new Set<string>([...corporateFollowUp.queries, ...followUp.queries].map(String))];
     for (const query of allFollowUpQueries.filter((item) => !baseQueries.includes(item))) {
-      const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
+      try {
+        const response = await throttledSearch(apiKey, query, previousRequestAt); previousRequestAt = response.requestedAt; batches.push(response.result);
+      } catch (error) {
+        previousRequestAt = Date.now();
+        failedQueries.push({ stage: "事件追踪", query, error: error instanceof Error ? error.message : String(error) });
+      }
     }
     let socialChannels: any = { xueqiu: { ok: false, count: 0, error: "未执行" }, twitter: { ok: false, count: 0, error: "未执行" } };
     // The scan only samples discussion for discovery/heat. The selected event
@@ -277,7 +297,9 @@ export async function POST(request: Request) {
       };
     }).sort((a: any, b: any) => b.score - a.score);
     const events = ranked.map((event: any, index: number) => ({ ...event, id: `event-${index + 1}`, rank: index + 1, eligible: true, status: "已发现", eventRole: event.family === "market_move" ? "行情事实" : "原因事件" }));
-    const causal = await buildCausalAnalysisTopics(deepseekApiKey, events);
+    let topicSkill = "";
+    try { topicSkill = await readFile(path.join(process.cwd(), "skills", "discover-financial-topics", "SKILL.md"), "utf-8"); } catch {}
+    const causal = await buildCausalAnalysisTopics(deepseekApiKey, events, strategyProfile, topicSkill);
     const eventById = new Map(events.flatMap((event: any) => [[event.id, event], [event.eventId, event]]));
     const augmentedAnalyses = [...causal.topics];
     const modelCoveredEventIds = new Set(causal.topics.flatMap((topic) => [...topic.observedEventIds, ...topic.causalEventIds]));
@@ -396,7 +418,7 @@ export async function POST(request: Request) {
       categoryCoverage: [...new Set(events.map((item: any) => item.category || "other"))], mainTopicCount: Math.min(5, topics.length),
       semanticReceipts: semantic.receipts, followUpSemanticReceipt: [corporateFollowUp.receipt, followUp.receipt].filter(Boolean).join(","), causalSemanticReceipt: causal.receipt,
       diagnostics: {
-        traces, counts, freshnessBuckets, latestByMarket,
+        traces, counts, freshnessBuckets, latestByMarket, failedQueries,
         calendarSeedCount: firstPass.filter(isCorporateCalendarSeed).length,
         corporateCalendarCompanies: corporateFollowUp.companies,
         recentCorporateEventCount: recentCorporateEvents.length,

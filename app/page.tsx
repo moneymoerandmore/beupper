@@ -5,6 +5,7 @@ import { topicEngineRules } from "./topic-engine";
 import { CreatorWorkflow } from "./creator-workflow";
 import { BaiduSourcePanel } from "./baidu-source-panel";
 import { ProjectLibrary } from "./project-library";
+import { StrategyIterationPanel } from "./strategy-iteration-panel";
 import MobileApp from "./mobile/mobile-app";
 import { diagnoseDouyinPerformance, douyinPerformanceBaseline, median } from "./douyin-performance-baseline";
 
@@ -84,6 +85,17 @@ const pipeline = [
   { label: "花生成片", status: "人工交接", done: false },
 ];
 
+function mergeDouyinReviews(liveReviews: any[]) {
+  const normalize = (value: string) => String(value || "").toLowerCase().replace(/#[^\s]+/g, "").replace(/[\s\p{P}\p{S}]/gu, "");
+  const rows = new Map<string, any>();
+  for (const item of [...douyinPerformanceBaseline, ...liveReviews]) {
+    const key = `${normalize(item.title)}|${String(item.publishedAt || "").slice(0, 10)}`;
+    const existing = rows.get(key);
+    rows.set(key, existing ? { ...existing, ...item, id: item.id || existing.id } : item);
+  }
+  return [...rows.values()];
+}
+
 export default function Home() {
   const [selected, setSelected] = useState(1);
   const [tab, setTab] = useState("总览");
@@ -94,6 +106,7 @@ export default function Home() {
   const [draftStartRequestId, setDraftStartRequestId] = useState(0);
   const [editProjectId, setEditProjectId] = useState("");
   const [publications, setPublications] = useState<any[]>([]);
+  const [douyinRecords, setDouyinRecords] = useState<any[]>(douyinPerformanceBaseline);
   const handleBaiduValidated = useCallback((value: boolean) => setBaiduConnected(value), []);
   const handleScan = useCallback((value: any) => { setLiveScan(value); setSelected(1); }, []);
   const topics: Topic[] = liveScan?.topics || [];
@@ -115,15 +128,18 @@ export default function Home() {
     return { rows, posts: recent.length, views: rows.reduce((sum, row) => sum + row.views, 0) };
   }, [publications]);
   const douyinReview = useMemo(() => {
-    const mature = douyinPerformanceBaseline.filter((item) => item.views >= 40 && !item.publishedAt.startsWith("2026-09-02"));
+    const mature = douyinRecords.filter((item) => Number(item.views || 0) >= 40);
     const top = [...mature].sort((a, b) => b.views - a.views).slice(0, 8);
+    const detailCount = douyinRecords.filter((item) => item.detailCollected || item.twoSecondBounceRate != null || item.fiveSecondCompletionRate != null || item.trafficSources).length;
+    const collectedTimes = douyinRecords.map((item) => Date.parse(item.collectedAt || "")).filter(Number.isFinite);
     return {
-      count: douyinPerformanceBaseline.length,
+      count: douyinRecords.length,
       medianViews: median(mature.map((item) => item.views)),
-      medianWatchSeconds: median(mature.map((item) => item.averageWatchSeconds)),
-      top,
+      medianWatchSeconds: median(mature.map((item) => Number(item.averageWatchSeconds || 0)).filter((value) => value > 0)),
+      top, detailCount,
+      latestCollectedAt: collectedTimes.length ? new Date(Math.max(...collectedTimes)).toISOString() : "",
     };
-  }, []);
+  }, [douyinRecords]);
 
   useEffect(() => {
     const openTab = window.localStorage.getItem("financial-titan-open-tab");
@@ -131,11 +147,20 @@ export default function Home() {
     const stored = window.localStorage.getItem("fin-titan-selected");
     if (stored) setSelected(Number(stored));
     const loadPublications = () => setPublications(JSON.parse(window.localStorage.getItem("financial-titan-publication-links") || "[]"));
+    const loadDouyinReviews = () => {
+      try { setDouyinRecords(mergeDouyinReviews(JSON.parse(window.localStorage.getItem("financial-titan-douyin-live-reviews") || "[]"))); }
+      catch { setDouyinRecords(douyinPerformanceBaseline); }
+    };
     window.localStorage.setItem("financial-titan-douyin-performance-baseline", JSON.stringify(douyinPerformanceBaseline));
     loadPublications();
+    loadDouyinReviews();
     window.addEventListener("financial-titan-publications-updated", loadPublications);
+    window.addEventListener("financial-titan-douyin-reviews-updated", loadDouyinReviews);
     setReady(true);
-    return () => window.removeEventListener("financial-titan-publications-updated", loadPublications);
+    return () => {
+      window.removeEventListener("financial-titan-publications-updated", loadPublications);
+      window.removeEventListener("financial-titan-douyin-reviews-updated", loadDouyinReviews);
+    };
   }, []);
 
   useEffect(() => {
@@ -164,9 +189,9 @@ export default function Home() {
           <div><b>金融巨子</b><span>CONTENT OS</span></div>
         </div>
         <nav>
-          {["总览", "稿件工坊", "资产库"].map((item, i) => (
+          {["总览", "稿件工坊", "资产库", "策略迭代"].map((item, i) => (
             <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-              <span className="navIcon">{["◫", "✎", "▣"][i]}</span>{item}
+              <span className="navIcon">{["◫", "✎", "▣", "↻"][i]}</span>{item}
             </button>
           ))}
         </nav>
@@ -189,6 +214,7 @@ export default function Home() {
 
         {tab === "稿件工坊" && <CreatorWorkflow key={editProjectId ? `edit-${editProjectId}` : `draft-${draftStartRequestId}`} notify={notify} selectedTopic={editProjectId ? undefined : active?.title} selectedTopicData={editProjectId ? undefined : active} startRequestId={editProjectId ? 0 : draftStartRequestId} editProjectId={editProjectId} />}
         {tab === "资产库" && <ProjectLibrary notify={notify} onEditProject={(projectId) => { setEditProjectId(projectId); setDraftStartRequestId(0); setTab("稿件工坊"); notify("已载入指定项目，继续编辑不会创建副本"); }} />}
+        {tab === "策略迭代" && <StrategyIterationPanel notify={notify} />}
         <div style={{display: tab === "总览" ? "block" : "none"}}>
         <BaiduSourcePanel notify={notify} onValidated={handleBaiduValidated} onScan={handleScan} />
         <div className="stats">
@@ -318,7 +344,7 @@ export default function Home() {
         <section className="performanceReview">
           <div className="sectionTitle compact">
             <div><p className="eyebrow">DOUYIN REVIEW</p><h2>抖音历史复盘指标</h2></div>
-            <span className="engineVersion">已沉淀 {douyinReview.count} 条创作者后台数据</span>
+            <span className="engineVersion">已沉淀 {douyinReview.count} 条创作者后台数据 · {douyinReview.detailCount} 条含详细指标</span>
           </div>
           <div className="reviewBenchmarks">
             <span><small>成熟作品中位播放</small><b>{douyinReview.medianViews.toLocaleString("zh-CN")}</b></span>
@@ -334,7 +360,7 @@ export default function Home() {
               return <div className="reviewRow" key={item.id}><span title={item.title}>{item.title}</span><b>{item.views.toLocaleString("zh-CN")}</b><b>{item.averageWatchSeconds.toFixed(1)}秒</b><b>{item.twoSecondBounceRate == null ? "—" : `${item.twoSecondBounceRate}%`}</b><b>{item.fiveSecondCompletionRate == null ? "—" : `${item.fiveSecondCompletionRate}%`}</b><b>{lead ? `${lead[0]} ${lead[1]}%` : "—"}</b><em>{diagnoseDouyinPerformance(item, douyinReview.medianViews, douyinReview.medianWatchSeconds)}</em></div>;
             })}
           </div>
-          <p className="metricDisclosure">数据来自2026-09-02已登录的抖音创作者中心；详情页没有展示的留存与来源字段保持为空，不做估算。封面点击率不再作为抖音推荐流的核心判断指标。</p>
+          <p className="metricDisclosure">数据来自抖音创作者中心，最近同步：{douyinReview.latestCollectedAt ? new Date(douyinReview.latestCollectedAt).toLocaleString("zh-CN") : "尚无时间记录"}；详情页没有展示的留存与来源字段保持为空，不做估算。</p>
         </section>
 
         <section className="method">
