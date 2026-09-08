@@ -28,6 +28,10 @@ export type SemanticEvent = {
   marketReaction: number;
   novelty: number;
   confidence: number;
+  isCurrentEvent: boolean;
+  currentAction: string;
+  timeEvidence: string;
+  timeConfidence: "high" | "medium" | "low";
 };
 
 export type CausalAnalysisTopic = {
@@ -55,11 +59,13 @@ const extractionSystem = `你是全球财经新闻事件编辑。你的任务不
 
 事件必须是具体的“行动者—动作—对象—时间”或“资产—价格变化—时间”，不能写成“市场关注汇率”“科技板块值得关注”等主题。动态提取所有公司、机构、官员、国家、产品、行业和资产，不依赖预设名单。
 
+严格区分“文章近期发布”和“事情近期发生”。搜索结果发布时间只是文章时间，不能证明文中提到的动作属于当前事件。新闻回顾、背景介绍、旧计划、旧传闻、旧公告被近期文章重新引用时，不得建立为当前事件；把对应evidenceId放入unclassifiedEvidenceIds。只有证据正文明确给出72小时内的新动作、新阶段、新公告、新价格反应或新的官方确认，isCurrentEvent才可为true。像“计划上市、拟上市、已启动上市辅导、曾提交申请”必须结合明确的新日期和新动作；仅仅再次谈到某公司上市，currentAction为空且isCurrentEvent=false。occurredAt必须是事件动作本身的时间，禁止复制文章抓取时间或根据查询中的“今日”猜测。
+
 严格区分 rumor、discussion、proposal、official、implemented、market_reaction；拟议措施不能写成已经实施。不同来源描述同一具体动作时合并；同属一个行业但动作、主体或时间不同，必须拆开。每条有效证据必须分配给一个事件；确实无法判断的证据放入 unclassifiedEvidenceIds，禁止静默丢弃。
 
 社交平台内容只用于识别讨论度、主要分歧、拥挤预期和待核验线索，不能把单个用户观点、未经证实数字或涨跌预测写成事实。与某家公司财报有关的雪球、X/Twitter、Reddit讨论，优先把evidenceId并入对应公司事件；只有讨论本身发生异常扩散且构成独立市场现象时，才建立stage=discussion的事件。公司正式披露与盘前/盘后价格变化是两件事件：前者family=corporate，后者family=market_move，并通过transmission描述先后关系。
 
-只输出JSON对象：{"events":[{"eventId":"临时稳定ID","title":"具体事实标题","summary":"两句事实摘要","occurredAt":"ISO时间或空字符串","family":"market_move|monetary|fiscal_macro|regulation_trade|corporate|industry_supply|capital_flow|geopolitics|credit_risk|commodity_fx_rates|other","stage":"rumor|discussion|proposal|official|implemented|market_reaction|unknown","actors":[],"actions":[],"objects":[],"sectors":[],"markets":[],"assets":[],"transmission":[],"evidenceIds":[],"marketReaction":0,"novelty":0,"confidence":0}],"unclassifiedEvidenceIds":[]}。后三个分数为0到100。保持紧凑：title不超过45字，summary不超过100字，每个数组最多8项，不要重复解释。`;
+只输出JSON对象：{"events":[{"eventId":"临时稳定ID","title":"具体事实标题","summary":"两句事实摘要","occurredAt":"事件动作本身的ISO时间或空字符串","isCurrentEvent":true,"currentAction":"72小时内实际新增的动作","timeEvidence":"支持事件时间的证据原句，不超过60字","timeConfidence":"high|medium|low","family":"market_move|monetary|fiscal_macro|regulation_trade|corporate|industry_supply|capital_flow|geopolitics|credit_risk|commodity_fx_rates|other","stage":"rumor|discussion|proposal|official|implemented|market_reaction|unknown","actors":[],"actions":[],"objects":[],"sectors":[],"markets":[],"assets":[],"transmission":[],"evidenceIds":[],"marketReaction":0,"novelty":0,"confidence":0}],"unclassifiedEvidenceIds":[]}。后三个分数为0到100。保持紧凑：title不超过45字，summary不超过100字，每个数组最多8项，不要重复解释。`;
 
 function parseJson(text: string) {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -126,6 +132,10 @@ function cleanEvent(raw: any, fallbackId: string): SemanticEvent {
     actors: list(raw.actors), actions: list(raw.actions), objects: list(raw.objects), sectors: list(raw.sectors),
     markets: list(raw.markets), assets: list(raw.assets), transmission: list(raw.transmission), evidenceIds: list(raw.evidenceIds),
     marketReaction: number(raw.marketReaction), novelty: number(raw.novelty), confidence: number(raw.confidence),
+    isCurrentEvent: raw.isCurrentEvent === true,
+    currentAction: String(raw.currentAction || "").trim(),
+    timeEvidence: String(raw.timeEvidence || "").trim(),
+    timeConfidence: ["high", "medium", "low"].includes(raw.timeConfidence) ? raw.timeConfidence : "low",
   };
 }
 
@@ -255,7 +265,7 @@ export function scoreSemanticEvent(event: SemanticEvent, evidence: SemanticRefer
   const authorityCount = evidence.filter((item) => item.authoritative).length;
   const occurredAt = Date.parse(event.occurredAt || "");
   const fallbackTimes = evidence.map((item) => Date.parse(item.publishedAt)).filter(Number.isFinite);
-  const timestamp = Number.isFinite(occurredAt) ? occurredAt : Math.max(...fallbackTimes, Date.now() - 48 * 3_600_000);
+  const timestamp = Number.isFinite(occurredAt) ? occurredAt : Math.max(...fallbackTimes, Date.now() - 72 * 3_600_000);
   const ageHours = Math.max(0, (Date.now() - timestamp) / 3_600_000);
   const freshness = ageHours <= 2 ? 100 : ageHours <= 8 ? 94 : ageHours <= 24 ? 70 : ageHours <= 48 ? 28 : 0;
   const evidenceQuality = Math.min(100, sources.size * 18 + authorityCount * 16 + event.confidence * 0.35);

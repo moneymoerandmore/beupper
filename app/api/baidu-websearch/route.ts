@@ -8,6 +8,8 @@ export const runtime = "nodejs";
 const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|investor\.|\/ir(?:\/|-)|gcs-web|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
 const socialPattern = /twitter|weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const SOURCE_WINDOW_HOURS = 72;
+const SOURCE_WINDOW_MS = SOURCE_WINDOW_HOURS * 3_600_000;
 
 function referenceText(reference: any) {
   return `${reference.title || ""} ${reference.snippet || reference.abstract || reference.content || ""} ${reference.url || ""}`;
@@ -51,7 +53,7 @@ function buildScanQueries(now = new Date()) {
     if (/美股|标普|纳斯达克|道琼斯|wall street|global stocks/i.test(query)) return `${chinaDate} 美东交易日${nyDate} 最新收盘 ${query}`;
     if (chinaNow.getUTCHours() >= 15 && /A股|沪指|上证|深成指|创业板|科创|两市/.test(query)) return `${chinaDate} 今日收盘 收盘后发布 ${query}`;
     if (/财报|业绩|公告|披露|盘前盘后|earnings|results|guidance|filing/i.test(query)) return `${chinaDate} 刚刚 今日最新 ${query}`;
-    return `${chinaDate} 过去48小时 ${query}`;
+    return `${chinaDate} 过去72小时 ${query}`;
   }))];
 }
 
@@ -61,12 +63,12 @@ function isFreshReference(reference: any) {
   const date = parseReferenceDate(rawDate) || urlDate || parseInlineDate(reference);
   if (!date) return false;
   const ageMs = Date.now() - date.getTime();
-  if (ageMs < 0 || ageMs > 48 * 3_600_000) return false;
+  if (ageMs < 0 || ageMs > SOURCE_WINDOW_MS) return false;
   // 搜索接口偶尔把重新抓取时间当成发布时间。URL 中明确存在旧发布日期时，
   // 以原始文章日期为准，防止 2018 年行情被包装成今天的实时价格。
   if (urlDate) {
     const urlAgeMs = Date.now() - urlDate.getTime();
-    if (urlAgeMs < 0 || urlAgeMs > 48 * 3_600_000) return false;
+    if (urlAgeMs < 0 || urlAgeMs > SOURCE_WINDOW_MS) return false;
     if (Math.abs(date.getTime() - urlDate.getTime()) > 72 * 3_600_000) return false;
   }
   const query = String(reference.query || "");
@@ -81,8 +83,7 @@ function isFreshReference(reference: any) {
   return true;
 }
 
-// 财报预告通常提前数日发布。它不能直接进入“今日事件全集”，但可以作为
-// 今日公司名单的发现种子，触发对正式财报、电话会和价格反应的二次核验。
+// 财报日历也必须通过统一的 72 小时来源硬门，旧日历不能绕过来源时效约束。
 function isCorporateCalendarSeed(reference: any) {
   const query = String(reference.query || "");
   const text = referenceText(reference);
@@ -91,15 +92,24 @@ function isCorporateCalendarSeed(reference: any) {
   const date = parseReferenceDate(reference.date || reference.published_time || reference.publish_time) || parseUrlDate(reference.url) || parseInlineDate(reference);
   if (!date) return false;
   const ageMs = Date.now() - date.getTime();
-  return ageMs >= 0 && ageMs <= 14 * 24 * 3_600_000;
+  return ageMs >= 0 && ageMs <= SOURCE_WINDOW_MS;
 }
 
 function freshnessForAge(ageHours: number) {
-  return ageHours <= 2 ? 100 : ageHours <= 8 ? 94 : ageHours <= 24 ? 70 : ageHours <= 48 ? 28 : 0;
+  return ageHours <= 2 ? 100 : ageHours <= 8 ? 94 : ageHours <= 24 ? 70 : ageHours <= 48 ? 28 : ageHours <= 72 ? 12 : 0;
 }
 
 function freshnessLane(ageHours: number) {
-  return ageHours <= 2 ? "breaking_2h" : ageHours <= 8 ? "current_session_8h" : ageHours <= 24 ? "today_24h" : "background_48h";
+  return ageHours <= 2 ? "breaking_2h" : ageHours <= 8 ? "current_session_8h" : ageHours <= 24 ? "today_24h" : ageHours <= 48 ? "background_48h" : "background_72h";
+}
+
+function isVerifiedCurrentEvent(event: any) {
+  if (event?.isCurrentEvent !== true || !String(event?.currentAction || "").trim()) return false;
+  if (!event?.occurredAt || event?.timeConfidence === "low") return false;
+  const occurredAt = Date.parse(event.occurredAt);
+  if (!Number.isFinite(occurredAt)) return false;
+  const ageMs = Date.now() - occurredAt;
+  return ageMs >= -6 * 3_600_000 && ageMs <= SOURCE_WINDOW_MS;
 }
 
 function standaloneAnalysisForEvent(event: any) {
@@ -280,7 +290,9 @@ export async function POST(request: Request) {
     }));
     const semantic = await standardizeFinancialEvents(deepseekApiKey, semanticReferences);
     const referenceById = new Map(semanticReferences.map((item) => [item.traceId, item]));
-    const ranked = semantic.events.map((event: any) => {
+    const excludedBackgroundEvents = semantic.events.filter((event: any) => !isVerifiedCurrentEvent(event));
+    const currentEvents = semantic.events.filter(isVerifiedCurrentEvent);
+    const ranked = currentEvents.map((event: any) => {
       const eventEvidence = event.evidenceIds.map((id: string) => referenceById.get(id)).filter(Boolean) as any[];
       const scoring = scoreSemanticEvent(event, eventEvidence);
       return {
@@ -392,16 +404,18 @@ export async function POST(request: Request) {
     }
     const eventForEvidence = new Map<string, string>(); events.forEach((event: any) => event.evidenceIds.forEach((id: string) => eventForEvidence.set(id, event.eventId)));
     const unclassified = new Set(semantic.unclassifiedEvidenceIds); const retainedIds = new Set(references.map((item: any) => item.traceId));
-    const traces = collected.map((item) => ({
+    // 诊断明细只展示通过 72 小时来源硬门的文章；旧闻只保留淘汰总数。
+    const traces = fresh.map((item) => ({
       traceId: item.traceId, title: item.title, url: item.url, query: item.query, publishedAt: item.date || item.published_time || item.publish_time || "",
-      status: timeFilteredIds.has(item.traceId) ? "time_filtered" : urlDuplicateIds.has(item.traceId) ? "url_duplicate" : deduped.duplicateIds.has(item.traceId) ? "content_duplicate" : unclassified.has(item.traceId) ? "unclassified" : eventForEvidence.has(item.traceId) ? "assigned_to_event" : retainedIds.has(item.traceId) ? "unassigned" : "unknown",
+      status: urlDuplicateIds.has(item.traceId) ? "url_duplicate" : deduped.duplicateIds.has(item.traceId) ? "content_duplicate" : unclassified.has(item.traceId) ? "unclassified" : eventForEvidence.has(item.traceId) ? "assigned_to_event" : retainedIds.has(item.traceId) ? "unassigned" : "unknown",
       eventId: eventForEvidence.get(item.traceId) || "",
     }));
     const counts = traces.reduce((acc: any, item: any) => ({ ...acc, [item.status]: (acc[item.status] || 0) + 1 }), {});
+    counts.time_filtered = timeFilteredIds.size;
 
     const freshnessBuckets = events.reduce((acc: Record<string, number>, event: any) => {
       acc[event.freshnessLane] = (acc[event.freshnessLane] || 0) + 1; return acc;
-    }, { breaking_2h: 0, current_session_8h: 0, today_24h: 0, background_48h: 0 });
+    }, { breaking_2h: 0, current_session_8h: 0, today_24h: 0, background_48h: 0, background_72h: 0 });
     const latestByMarket = events.reduce((acc: Record<string, any>, event: any) => {
       for (const market of event.markets || []) {
         if (!acc[market] || event.ageHours < acc[market].ageHours) acc[market] = { title: event.title, ageHours: event.ageHours, occurredAt: event.occurredAt };
@@ -410,9 +424,9 @@ export async function POST(request: Request) {
     }, {});
 
     return Response.json({
-      ok: true, scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
+      ok: true, pipelineVersion: "source-72h-v3", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
       followUpQueryCount: allFollowUpQueries.length, followUpQueries: allFollowUpQueries, references,
-      collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: 48,
+      collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: SOURCE_WINDOW_HOURS,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
       topics, rejectedTopics: [], events, discoveredEventCount: events.length,
       categoryCoverage: [...new Set(events.map((item: any) => item.category || "other"))], mainTopicCount: Math.min(5, topics.length),
@@ -426,6 +440,8 @@ export async function POST(request: Request) {
         socialChannels,
         extendedHoursReferenceCount: semanticReferences.filter((item) => /盘前|盘后|premarket|pre-market|after.hours|extended.hours/i.test(`${item.title} ${item.snippet} ${item.query}`)).length,
         unclassifiedEvidenceIds: semantic.unclassifiedEvidenceIds,
+        backgroundOrUnverifiedEventCount: excludedBackgroundEvents.length,
+        backgroundOrUnverifiedEvents: excludedBackgroundEvents.map((event: any) => ({ title: event.title, occurredAt: event.occurredAt, currentAction: event.currentAction, timeEvidence: event.timeEvidence, timeConfidence: event.timeConfidence })),
       },
       requestIds: batches.map((batch) => batch.requestId),
     });
