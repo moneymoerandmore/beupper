@@ -340,13 +340,16 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   }, [hydrated, projectId, step, topic, topicContext, topicApproved, packageIndex, packageApproved, packagingOptions, packagingProvenance, script, archived, coverPrompt, coverImages, coverMaterial, huashengTask, huashengMode, huashengAspect]);
 
   useEffect(() => {
+    // 首次渲染时 key state 还是空字符串；必须等 localStorage 恢复完成后再写回，
+    // 否则会在 hydration 前误删用户已经保存的 API Key。
+    if (!hydrated) return;
     if (poeApiKey) window.localStorage.setItem("financial-titan-poe-key", poeApiKey);
     else window.localStorage.removeItem("financial-titan-poe-key");
     if (deepseekApiKey) window.localStorage.setItem("financial-titan-deepseek-key", deepseekApiKey);
     else window.localStorage.removeItem("financial-titan-deepseek-key");
     window.localStorage.setItem("financial-titan-poe-model", poeModel);
     window.localStorage.setItem("financial-titan-script-model", scriptModel);
-  }, [poeApiKey, deepseekApiKey, poeModel, scriptModel]);
+  }, [hydrated, poeApiKey, deepseekApiKey, poeModel, scriptModel]);
 
   // peanutcut methodology：封面控制观众的 0.5 秒，基因层固定，变量层只换文案与视觉锤。
   useEffect(() => {

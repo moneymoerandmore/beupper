@@ -46,6 +46,18 @@ export const coverageMatrix: CoverageCell[] = [
     ],
   },
   {
+    key: "corporate_operating_catalyst",
+    label: "上市公司产品与经营催化剂",
+    queries: [
+      "港股 过去72小时 上市公司 发布会 新品 新车 新机 定价 预售 股价反应",
+      "A股 过去72小时 上市公司 新品发布 产品定价 订单 交付 销量 股价异动",
+      "美股 中概股 past 72 hours product launch new model pricing preorder stock reaction",
+      "上市公司 过去72小时 订单 锁单 交付 销量 经营数据 股价反应",
+      "上市公司 过去72小时 大客户 中标 量产 扩产 涨价 降价 股价异动",
+      "上市公司 过去72小时 召回 停产 延期 产品事故 经营影响 股价反应",
+    ],
+  },
+  {
     key: "industry_supply",
     label: "产业供需与供应链",
     queries: [

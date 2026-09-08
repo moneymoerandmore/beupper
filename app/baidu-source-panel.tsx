@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiUrl } from "./api-client";
 
-const hotspotPipelineVersion = "source-72h-v3";
+const hotspotPipelineVersion = "catalyst-recovery-audit-v6";
 
 function sourceUrlFor(item: any) {
   const candidate = item?.evidence?.find((entry: any) => entry?.url)?.url;
@@ -152,7 +152,8 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
           {scanStale && <p className="coverError">这份结果已超过90分钟，只用于历史查看，不再作为首页“今日热点”。请重新扫描以获取最新交易时段信息。</p>}
           {scan.categoryCoverage?.length > 0 && <div className="coverageTags">覆盖：{scan.categoryCoverage.map((item: string) => <span key={item}>{item}</span>)}</div>}
           {scan.diagnostics?.freshnessBuckets && <div className="coverageTags">时效：<span>2小时突发 {scan.diagnostics.freshnessBuckets.breaking_2h || 0}</span><span>8小时交易时段 {scan.diagnostics.freshnessBuckets.current_session_8h || 0}</span><span>24小时今日 {scan.diagnostics.freshnessBuckets.today_24h || 0}</span><span>24—48小时 {scan.diagnostics.freshnessBuckets.background_48h || 0}</span><span>48—72小时 {scan.diagnostics.freshnessBuckets.background_72h || 0}</span><span>超时来源已隐藏 {scan.timeFilteredOut || 0}</span></div>}
-          {scan.diagnostics && <div className="coverageTags">财报雷达：<span>日历发现 {scan.diagnostics.calendarSeedCount || 0}</span><span>8小时内正式财报 {scan.diagnostics.recentCorporateEventCount || 0}</span><span>盘前/盘后证据 {scan.diagnostics.extendedHoursReferenceCount || 0}</span><span>雪球/X等讨论 {scan.diagnostics.socialReferenceCount || 0}</span><span>实体核验查询 {scan.followUpQueryCount || 0}</span><span>旧闻/时间未核验排除 {scan.diagnostics.backgroundOrUnverifiedEventCount || 0}</span></div>}
+          {scan.diagnostics && <div className="coverageTags">公司催化剂：<span>日历发现 {scan.diagnostics.calendarSeedCount || 0}</span><span>8小时内正式财报 {scan.diagnostics.recentCorporateEventCount || 0}</span><span>24小时内产品/经营动作 {scan.diagnostics.recentOperatingCatalystEventCount || 0}</span><span>盘前/盘后证据 {scan.diagnostics.extendedHoursReferenceCount || 0}</span><span>雪球/X等讨论 {scan.diagnostics.socialReferenceCount || 0}</span><span>实体核验查询 {scan.followUpQueryCount || 0}</span><span>旧闻/时间未核验排除 {scan.diagnostics.backgroundOrUnverifiedEventCount || 0}</span></div>}
+          {scan.diagnostics?.operatingCatalystFunnel && <div className="coverageTags">经营事件漏斗：<span>原始召回 {scan.diagnostics.operatingCatalystFunnel.recalled || 0}</span><span>72小时有效并去重 {scan.diagnostics.operatingCatalystFunnel.fresh || 0}</span><span>标准化事件 {scan.diagnostics.operatingCatalystFunnel.events || 0}</span><span>高潜选题 {scan.diagnostics.operatingCatalystFunnel.topics || 0}</span></div>}
           {scan.diagnostics?.socialChannels && <div className="coverageTags">社交直连：<span>雪球 {scan.diagnostics.socialChannels.xueqiu?.ok ? `${scan.diagnostics.socialChannels.xueqiu.count}条` : scan.diagnostics.socialChannels.xueqiu?.error || "失败"}</span><span>X {scan.diagnostics.socialChannels.twitter?.ok ? `${scan.diagnostics.socialChannels.twitter.count}条` : scan.diagnostics.socialChannels.twitter?.error || "失败"}</span></div>}
           {scan.diagnostics?.corporateCalendarCompanies?.length > 0 && <div className="coverageTags">今日财报实体：{scan.diagnostics.corporateCalendarCompanies.map((item: any) => <span key={`${item.name}-${item.ticker}`}>{item.name}{item.ticker ? ` · ${item.ticker}` : ""}</span>)}</div>}
           {scan.events?.length > 0 && <div className="rejectionDesk">

@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 
 const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|investor\.|\/ir(?:\/|-)|gcs-web|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
 const socialPattern = /twitter|weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
+const operatingCatalystPattern = /发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|大客户|召回|停产|延期|product launch|new model|pricing|preorder|orders|deliveries|sales|production|recall/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const SOURCE_WINDOW_HOURS = 72;
 const SOURCE_WINDOW_MS = SOURCE_WINDOW_HOURS * 3_600_000;
@@ -112,9 +113,16 @@ function isVerifiedCurrentEvent(event: any) {
   return ageMs >= -6 * 3_600_000 && ageMs <= SOURCE_WINDOW_MS;
 }
 
+function isOperatingCatalystEvent(event: any) {
+  const text = `${event?.title || ""} ${event?.summary || ""} ${(event?.actions || []).join(" ")} ${(event?.objects || []).join(" ")}`;
+  const operatingAction = operatingCatalystPattern.test(text);
+  const listedCompanySignal = event?.family === "corporate" || (event?.actors || []).length > 0 || (event?.assets || []).length > 0;
+  return operatingAction && listedCompanySignal;
+}
+
 function standaloneAnalysisForEvent(event: any) {
   const headline = String(event.title || "重要财经事件").replace(/[。？！?!]+$/g, "");
-  const isCorporate = event.family === "corporate" || /财报|业绩|盈利|指引|公告|披露|回购|分红|earnings|guidance/i.test(`${event.title} ${event.summary} ${(event.actions || []).join(" ")}`);
+  const isCorporate = event.family === "corporate" || isOperatingCatalystEvent(event) || /财报|业绩|盈利|指引|公告|披露|回购|分红|earnings|guidance/i.test(`${event.title} ${event.summary} ${(event.actions || []).join(" ")}`);
   const isMarketMove = event.family === "market_move";
   const title = isCorporate
     ? `${headline}：本股估值要重算吗？`
@@ -225,8 +233,9 @@ export async function POST(request: Request) {
     const baseQueries = buildScanQueries(); const batches: any[] = []; const failedQueries: any[] = []; let previousRequestAt = 0;
     for (const query of baseQueries) {
       const calendarQuery = /财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(query);
+      const operatingCatalystQuery = /发布会|新品|新车|新机|产品定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|product launch|new model|pricing|preorder/i.test(query);
       try {
-        const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
+        const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery || operatingCatalystQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
       } catch (error) {
         previousRequestAt = Date.now();
         failedQueries.push({ stage: "基础召回", query, error: error instanceof Error ? error.message : String(error) });
@@ -318,9 +327,22 @@ export async function POST(request: Request) {
     const recentCorporateEvents = events.filter((event: any) =>
       event.ageHours <= 8 && (event.family === "corporate" || /财报|业绩|盈利|指引|earnings|results|guidance/i.test(`${event.title} ${event.summary}`)),
     ).slice(0, 4);
-    const protectedEvents = [...new Map([...events.slice(0, 8), ...recentCorporateEvents].map((event: any) => [event.id, event])).values()];
+    // 发布会常在晚间，真正可分析的本股反应发生在次日交易时段，因此给予24小时窗口；
+    // 保护的是通用经营动作类别，不是任何公司名单。
+    const recentOperatingCatalystEvents = events.filter((event: any) => event.ageHours <= 24 && isOperatingCatalystEvent(event)).slice(0, 4);
+    const protectedEvents = [...new Map([...events.slice(0, 8), ...recentCorporateEvents, ...recentOperatingCatalystEvents].map((event: any) => [event.id, event])).values()];
     for (const event of protectedEvents) {
       if (!modelCoveredEventIds.has(event.id) && !modelCoveredEventIds.has(event.eventId)) augmentedAnalyses.push(standaloneAnalysisForEvent(event));
+    }
+    // 模型可能把单一公司的新品事件吞进宽泛行业题。重大经营催化剂必须另有一个
+    // 标题带公司实体的本股分析题，保证“被覆盖”不等于“被藏起来”。
+    for (const event of recentOperatingCatalystEvents) {
+      const entityNames = [...(event.actors || []), ...(event.assets || [])].map(String).filter((item) => item.length >= 2);
+      const hasEntitySpecificTopic = causal.topics.some((topic) => {
+        const linked = [...topic.observedEventIds, ...topic.causalEventIds].some((id) => id === event.id || id === event.eventId);
+        return linked && entityNames.some((entity) => topic.title.includes(entity));
+      });
+      if (!hasEntitySpecificTopic) augmentedAnalyses.push(standaloneAnalysisForEvent(event));
     }
     const topicCandidates = augmentedAnalyses.map((analysis, index) => {
       const linkedEvents = [...new Set([...analysis.observedEventIds, ...analysis.causalEventIds])]
@@ -375,6 +397,22 @@ export async function POST(request: Request) {
       else if (selectedTopics.length < 10) selectedTopics.push(corporateTopic);
       requiredTitles.add(corporateTopic.title);
     }
+    const operatingCatalystTopics = recentOperatingCatalystEvents
+      .map((event: any) => {
+        const entities = [...(event.actors || []), ...(event.assets || [])].map(String).filter((item) => item.length >= 2);
+        const linked = topicCandidates.filter((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => id === event.id || id === event.eventId));
+        return linked.find((topic) => entities.some((entity) => topic.title.includes(entity))) || linked[0];
+      })
+      .filter(Boolean)
+      .filter((topic: any, index: number, list: any[]) => list.findIndex((item: any) => item.title === topic.title) === index)
+      .slice(0, 3);
+    for (const catalystTopic of operatingCatalystTopics) {
+      if (selectedTopics.some((topic) => topic.title === catalystTopic.title)) continue;
+      const replaceAt = [...selectedTopics].reverse().findIndex((topic) => !requiredTitles.has(topic.title));
+      if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, catalystTopic);
+      else if (selectedTopics.length < 10) selectedTopics.push(catalystTopic);
+      requiredTitles.add(catalystTopic.title);
+    }
     const freshTopics = topicCandidates.filter((topic) => topic.ageHours <= 8);
     if (freshTopics.length && !selectedTopics.slice(0, 5).some((topic) => topic.ageHours <= 8)) {
       const fresh = freshTopics[0];
@@ -424,7 +462,7 @@ export async function POST(request: Request) {
     }, {});
 
     return Response.json({
-      ok: true, pipelineVersion: "source-72h-v3", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
+      ok: true, pipelineVersion: "catalyst-recovery-audit-v6", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
       followUpQueryCount: allFollowUpQueries.length, followUpQueries: allFollowUpQueries, references,
       collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: SOURCE_WINDOW_HOURS,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
@@ -436,6 +474,15 @@ export async function POST(request: Request) {
         calendarSeedCount: firstPass.filter(isCorporateCalendarSeed).length,
         corporateCalendarCompanies: corporateFollowUp.companies,
         recentCorporateEventCount: recentCorporateEvents.length,
+        recentOperatingCatalystEventCount: recentOperatingCatalystEvents.length,
+        operatingCatalystFunnel: {
+          recalled: collected.filter((item) => operatingCatalystPattern.test(referenceText(item))).length,
+          fresh: references.filter((item) => operatingCatalystPattern.test(referenceText(item))).length,
+          events: events.filter(isOperatingCatalystEvent).length,
+          topics: topics.filter((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => {
+            const event = eventById.get(id); return event && isOperatingCatalystEvent(event);
+          })).length,
+        },
         socialReferenceCount: semanticReferences.filter((item) => item.social).length,
         socialChannels,
         extendedHoursReferenceCount: semanticReferences.filter((item) => /盘前|盘后|premarket|pre-market|after.hours|extended.hours/i.test(`${item.title} ${item.snippet} ${item.query}`)).length,

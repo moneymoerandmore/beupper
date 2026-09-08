@@ -67,6 +67,8 @@ const extractionSystem = `你是全球财经新闻事件编辑。你的任务不
 
 只输出JSON对象：{"events":[{"eventId":"临时稳定ID","title":"具体事实标题","summary":"两句事实摘要","occurredAt":"事件动作本身的ISO时间或空字符串","isCurrentEvent":true,"currentAction":"72小时内实际新增的动作","timeEvidence":"支持事件时间的证据原句，不超过60字","timeConfidence":"high|medium|low","family":"market_move|monetary|fiscal_macro|regulation_trade|corporate|industry_supply|capital_flow|geopolitics|credit_risk|commodity_fx_rates|other","stage":"rumor|discussion|proposal|official|implemented|market_reaction|unknown","actors":[],"actions":[],"objects":[],"sectors":[],"markets":[],"assets":[],"transmission":[],"evidenceIds":[],"marketReaction":0,"novelty":0,"confidence":0}],"unclassifiedEvidenceIds":[]}。后三个分数为0到100。保持紧凑：title不超过45字，summary不超过100字，每个数组最多8项，不要重复解释。`;
 
+const operatingCatalystPattern = /发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|大客户|召回|停产|延期|product launch|new model|pricing|preorder|orders|deliveries|sales|production|recall/i;
+
 function parseJson(text: string) {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   return JSON.parse(cleaned);
@@ -169,18 +171,45 @@ export async function standardizeFinancialEvents(apiKey: string, references: Sem
   receipts.push(merged.receipt);
   const events = (merged.data.events || []).map((event: any, index: number) => cleanEvent(event, `event-${index + 1}`));
   (merged.data.unclassifiedEvidenceIds || []).forEach((id: any) => unclassified.add(String(id)));
+  // Cross-batch merging can silently drop a small corporate catalyst even when
+  // Baidu already recalled it. Audit every high-signal product/operating source;
+  // uncovered evidence receives a focused recovery pass and cannot disappear just
+  // because larger macro events dominated the main merge prompt.
+  const coveredIds = new Set(events.flatMap((event) => event.evidenceIds));
+  const missingCatalysts = references.filter((item) =>
+    operatingCatalystPattern.test(`${item.title} ${item.snippet} ${item.query}`) && !coveredIds.has(item.traceId),
+  );
+  if (missingCatalysts.length) {
+    for (let index = 0; index < missingCatalysts.length; index += 12) {
+      const chunk = missingCatalysts.slice(index, index + 12).map((item) => ({
+        evidenceId: item.traceId, title: item.title, summary: item.snippet.slice(0, 500), site: item.site,
+        publishedAt: item.publishedAt, query: item.query, authoritative: item.authoritative,
+      }));
+      const recovered = await deepSeekJson(apiKey, [
+        { role: "system", content: `${extractionSystem}\n这是经营催化剂漏失恢复。输入中的新品发布、新车新机、定价、订单、交付、销量、量产、中标、召回或停产，只要正文能证明72小时内发生，就必须建立以具体上市公司为主体的corporate事件；同一公司同一场发布会可合并，禁止改写成抽象行业主题。文章若同时给出该公司股价反应，应写进transmission和marketReaction。` },
+        { role: "user", content: `恢复这些尚未被任何事件认领的经营催化剂证据：${JSON.stringify(chunk)}` },
+      ]);
+      receipts.push(recovered.receipt);
+      for (const raw of recovered.data.events || []) {
+        const event = cleanEvent(raw, `catalyst-recovery-${events.length + 1}`);
+        if (!event.evidenceIds.length) continue;
+        events.push(event);
+        event.evidenceIds.forEach((id) => unclassified.delete(id));
+      }
+    }
+  }
   return { events, unclassifiedEvidenceIds: [...unclassified], receipts };
 }
 
 export async function deriveMarketFollowUpQueries(apiKey: string, references: SemanticReference[]) {
   const actionableReferences = references
-    .filter((item) => /收盘|盘前|盘后|close|closed|premarket|after.hours|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call|雪球|twitter|x\.com|reddit|热议|讨论|sentiment/i.test(`${item.title} ${item.snippet} ${item.site} ${item.url}`))
+    .filter((item) => /收盘|盘前|盘后|close|closed|premarket|after.hours|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call|发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|product launch|new model|pricing|preorder|orders|deliveries|sales|雪球|twitter|x\.com|reddit|热议|讨论|sentiment/i.test(`${item.title} ${item.snippet} ${item.site} ${item.url}`))
     .sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0))
     .slice(0, 45)
     .map((item) => ({ title: item.title, summary: item.snippet.slice(0, 320), publishedAt: item.publishedAt }));
   if (!actionableReferences.length) return { queries: [], receipt: "" };
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情、公司公告、今日财报日历和社交讨论。生成二次检索：第一类追查指数、行业或个股异动的具体原因；第二类逐一核验日历中今天应发布业绩的重要上市公司；第三类对重要财报公司补齐三个窗口：正式财报/公告原文与预期差、盘前或盘后实时涨跌与成交、雪球及X/Twitter投资者正在争论的核心问题。预告或日历只负责发现公司，绝不能当成已经发布。只追输入中动态出现的实体，不得沿用历史偏好，不得生成泛泛宏观查询。优先覆盖不同公司；同一公司最多生成官方结果、实时价格、社交讨论三条功能不同的查询，禁止近义重复。最多12条，互不重复，优先最近8小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
+    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情、公司公告、财报日历、上市公司产品与经营动作和社交讨论。生成二次检索：第一类追查指数、行业或个股异动的具体原因；第二类逐一核验日历中今天应发布业绩的重要上市公司；第三类对重要财报公司补齐正式披露与预期差、实时股价与成交、投资者核心分歧；第四类对动态发现的新品发布、新车新机、定价、预售订单、交付销量、量产扩产、中标、召回停产等公司催化剂，补齐官方发布原文、关键经营数字及同公司本股从发布前到发布后的价格/资金反应。预告只负责发现主体，绝不能当成已经发生。只追输入中动态出现的实体，不得沿用历史偏好或预设公司名单，不得生成泛泛宏观查询。优先覆盖不同公司；同一公司最多生成官方事实、实时价格、社交分歧三条功能不同的查询，禁止近义重复。最多12条，互不重复，优先最近24小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
     { role: "user", content: `北京时间${new Date().toISOString()}，最新可追踪证据：${JSON.stringify(actionableReferences)}` },
   ]);
   return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 12), receipt: result.receipt };
@@ -232,7 +261,7 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[], s
 
 只输出JSON：{"topics":[{"title":"具体分析命题","observedEventIds":[],"causalEventIds":[],"mechanism":"原因如何传到价格，不超过120字","causality":"confirmed|strong_hypothesis|possible|unresolved","counterEvidence":"最强反证，不超过80字","verificationSignals":[],"markets":[],"marketImportance":0,"explanatoryPower":0,"evidenceStrength":0,"novelty":0,"confidence":0,"searchDemand":0,"stakeholderConflict":0,"entitySpecificity":0,"timelinessOpportunity":0,"discoveryLane":"search|recommendation|dual"}]}。所有分数0到100，最多输出18个互不重复的分析命题。`;
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: `${system}\n公司财报、业绩预告、经营指引或资本开支更新属于公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：盈利预期发生了什么变化、估值锚如何移动、盘后或次日价格是否充分反映、未来上涨或下跌由哪些可验证信号决定。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司财报改写成行业趋势。\n\n以下是当前稳定选题Skill：${stableTopicSkill}\n\n以下是抖音真实数据形成的最新选题策略，只能在事实、时效和证据硬门之后影响选题构造与排序倾向，不能创造新闻或覆盖事件重要性：${JSON.stringify(strategyProfile?.topicDirectives || [])}` },
+    { role: "system", content: `${system}\n公司财报、业绩预告、经营指引、资本开支，以及新品发布、定价、订单、交付、销量、量产、扩产、中标、召回或停产，都是公司定价事件。只要事件明确指向一家上市公司，首要选题必须围绕该公司本股：市场原来定价了什么、新动作改变了收入/毛利/需求/竞争的哪项预期、发布前后股价与资金如何反应、价格是否充分反映、后续由哪些经营数字验证。行业、供应链和跨市场外溢只能作为第二层影响，不能取代本股成为标题和核心机制。只有证据显示多家公司同步变化、行业盈利预测被普遍上修或下修时，才可以另建行业级选题。不得因为公司规模大，就自动把单家公司事件改写成行业趋势。\n\n以下是当前稳定选题Skill：${stableTopicSkill}\n\n以下是抖音真实数据形成的最新选题策略，只能在事实、时效和证据硬门之后影响选题构造与排序倾向，不能创造新闻或覆盖事件重要性：${JSON.stringify(strategyProfile?.topicDirectives || [])}` },
     { role: "user", content: `北京时间${new Date().toISOString()}。从以下事件全集构建因果分析型选题：${JSON.stringify(compactEvents)}` },
   ]);
   const list = (value: any) => Array.isArray(value) ? [...new Set(value.map(String).filter(Boolean))] : [];

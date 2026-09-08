@@ -1,4 +1,5 @@
 import html
+import ctypes
 import json
 import importlib.util
 import os
@@ -18,6 +19,32 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOCIAL_PROFILE_ROOT = PROJECT_ROOT / "data" / "social-browser"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 SOCIAL_DEBUG_PORTS = {"xueqiu": 9331, "twitter": 9332}
+
+
+def _foreground_browser_window(pid):
+    """Restore and foreground the visible top-level window owned by pid."""
+    if os.name != "nt":
+        return False
+    user32 = ctypes.windll.user32
+    found = []
+    enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def visit(hwnd, _):
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(enum_proc(visit), 0)
+    if not found:
+        return False
+    hwnd = found[0]
+    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    return True
 
 
 def _browser_executable():
@@ -61,26 +88,58 @@ def _stop_headless_profile_browser(platform):
     return count
 
 
+def _close_dedicated_browser(platform):
+    """Close only this platform's CDP browser, preserving its profile/cookies."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{SOCIAL_DEBUG_PORTS[platform]}", timeout=1800
+            )
+            browser.close()
+        time.sleep(0.8)
+        return True
+    except Exception:
+        return False
+
+
 def open_social_login(platform):
     if platform not in ("xueqiu", "twitter"):
         return {"ok": False, "status": 400, "error": "不支持的社交平台"}
     browser = _browser_executable()
     if not browser:
         return {"ok": False, "status": 500, "error": "没有找到 Chrome 或 Edge"}
+    closed = _close_dedicated_browser(platform)
     stopped = _stop_headless_profile_browser(platform)
     url = "https://xueqiu.com/" if platform == "xueqiu" else "https://x.com/home"
-    subprocess.Popen(
+    process = subprocess.Popen(
         [
             str(browser), f"--user-data-dir={_profile_dir(platform)}",
             f"--remote-debugging-port={SOCIAL_DEBUG_PORTS[platform]}",
             "--remote-debugging-address=127.0.0.1",
-            "--no-first-run", "--no-default-browser-check", url,
+            "--no-first-run", "--no-default-browser-check", "--new-window",
+            "--window-position=80,80", "--window-size=1280,900", url,
         ],
-        cwd=str(PROJECT_ROOT), creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        cwd=str(PROJECT_ROOT),
+        # DETACHED_PROCESS prevents a GUI child launched by the hidden gateway
+        # from reliably attaching to the interactive desktop on Windows.
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     )
+    time.sleep(0.8)
+    if process.poll() not in (None, 0):
+        return {"ok": False, "status": 500, "error": f"专属浏览器启动失败（退出码 {process.returncode}）"}
+    # Chrome may create the window successfully but leave it behind the dashboard.
+    # Give its top-level window a moment to appear, then restore and foreground it.
+    foregrounded = False
+    for _ in range(12):
+        if _foreground_browser_window(process.pid):
+            foregrounded = True
+            break
+        time.sleep(0.25)
     return {
         "ok": True, "platform": platform,
-        "message": ("已清理残留后台会话，登录窗口已重新打开。" if stopped else "登录窗口已打开。")
+        "message": ("已重置残留专属会话，登录窗口已重新打开。" if (closed or stopped) else "登录窗口已打开。")
+        + ("窗口已置前。" if foregrounded else "窗口已创建；如未置前，请在任务栏选择该专属 Chrome 窗口。")
         + "完成登录后可直接回到页面检查状态，无需关闭窗口。",
     }
 
