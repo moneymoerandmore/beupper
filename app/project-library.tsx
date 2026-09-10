@@ -148,15 +148,33 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
     setDouyinSyncing(true);
     setDouyinSyncMessage("正在检测登录态并读取作品…");
     try {
-      const response = await fetch(apiUrl("/api/douyin/sync"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const payload = await readJsonResponse(response, "抖音创作者同步");
+      const requestSync = async () => {
+        const response = await fetch(apiUrl("/api/douyin/sync"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        return { response, payload: await readJsonResponse(response, "抖音创作者同步") };
+      };
+      let { response, payload } = await requestSync();
       if (response.status === 401 || payload.loginRequired) {
         const loginResponse = await fetch(apiUrl("/api/douyin/login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const loginPayload = await readJsonResponse(loginResponse, "抖音登录");
         if (!loginResponse.ok) throw new Error(loginPayload.error || "无法打开抖音登录窗口");
-        setDouyinSyncMessage("登录窗口已打开；登录完成后再点一次此按钮，即会自动抓取和匹配。 ");
-        notify("请在弹出的抖音创作者中心完成登录，然后再次点击同步");
-        return;
+        setDouyinSyncMessage("登录窗口已打开，正在等待登录完成；登录成功后会自动同步，无需再次点击…");
+        notify("请在弹出的抖音创作者中心完成登录，本页会自动继续");
+        const deadline = Date.now() + 5 * 60 * 1000;
+        let loggedIn = false;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2500));
+          const statusResponse = await fetch(apiUrl("/api/douyin/status"), { cache: "no-store" });
+          const statusPayload = await readJsonResponse(statusResponse, "抖音登录态检测");
+          if (!statusResponse.ok) throw new Error(statusPayload.error || "抖音登录态检测失败");
+          if (statusPayload.loggedIn) {
+            loggedIn = true;
+            break;
+          }
+          setDouyinSyncMessage("仍在等待抖音登录完成；请在登录窗口中完成扫码或验证…");
+        }
+        if (!loggedIn) throw new Error("等待抖音登录超时，请确认登录窗口中的验证已经完成后重试");
+        setDouyinSyncMessage("已获取抖音登录态，正在自动读取全部历史作品并匹配…");
+        ({ response, payload } = await requestSync());
       }
       if (!response.ok) throw new Error(payload.error || "抖音创作者数据读取失败");
       const liveReviews = Array.isArray(payload.records) ? payload.records : [];
@@ -166,7 +184,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
         const existing = reviewMap.get(key);
         reviewMap.set(key, existing ? { ...existing, ...item, id: item.id || existing.id } : item);
       }
-      const mergedReviews = [...reviewMap.values()];
+      const mergedReviews = [...reviewMap.values()].sort((a, b) => String(b.publishedAt || "").localeCompare(String(a.publishedAt || "")));
       const manual = JSON.parse(window.localStorage.getItem("financial-titan-douyin-review-manual-bindings") || "{}");
       const completed = bindReviewsByPublishingOrder(projects, links, manual, mergedReviews);
       const nextProjects = projects.map((project) => {
@@ -174,6 +192,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
         return review ? { ...project, douyinReview: review, updatedAt: project.updatedAt } : project;
       });
       setDouyinReviews(mergedReviews);
+      setReviewPickerOpen(true);
       setReviewBindings(completed);
       setProjects(nextProjects);
       window.localStorage.setItem("financial-titan-douyin-live-reviews", JSON.stringify(liveReviews));
@@ -383,7 +402,7 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
             {matchedDouyinReview ? <>
               <p className="reviewBoundTitle"><b>{matchedDouyinReview.title}</b><span>{new Date(matchedDouyinReview.publishedAt).toLocaleString("zh-CN")} · 创作者中心快照</span></p>
               <div className="assetReviewSnapshot"><span>播放<strong>{matchedDouyinReview.views.toLocaleString("zh-CN")}</strong></span><span>平均观看<strong>{matchedDouyinReview.averageWatchSeconds.toFixed(1)}秒</strong></span><span>平均播放占比<strong>{matchedDouyinReview.averagePlayRatio}%</strong></span><span>2秒跳出<strong>{matchedDouyinReview.twoSecondBounceRate == null ? "—" : `${matchedDouyinReview.twoSecondBounceRate}%`}</strong></span><span>5秒完播<strong>{matchedDouyinReview.fiveSecondCompletionRate == null ? "—" : `${matchedDouyinReview.fiveSecondCompletionRate}%`}</strong></span><span>搜索/推荐<strong>{matchedDouyinReview.trafficSources ? `${matchedDouyinReview.trafficSources.搜索 || 0}% / ${matchedDouyinReview.trafficSources.推荐页 || 0}%` : "—"}</strong></span></div>
-            </> : <div className="pendingCollect"><b>当前项目尚未关联抖音后台作品</b><span>可以从已抓取的29条历史作品中选择；绑定只影响复盘索引，不会创建新项目。</span></div>}
+            </> : <div className="pendingCollect"><b>当前项目尚未关联抖音后台作品</b><span>可以从已抓取的 {douyinReviews.length} 条历史作品中选择；绑定只影响复盘索引，不会创建新项目。</span></div>}
             {reviewPickerOpen && <div className="reviewPicker"><input value={reviewSearch} onChange={(event) => setReviewSearch(event.target.value)} placeholder="搜索抖音作品标题" autoFocus /><div>{filteredDouyinReviews.map((item) => <button key={item.id} onClick={() => bindDouyinReview(item.id)}><span><b>{item.title}</b><small>{new Date(item.publishedAt).toLocaleDateString("zh-CN")} · {item.views.toLocaleString("zh-CN")} 播放 · 平均观看 {item.averageWatchSeconds.toFixed(1)} 秒</small></span><i>关联</i></button>)}</div></div>}
           </article>
           <article className="outputBlock publicationAssets">
