@@ -66,6 +66,15 @@ export const coverageMatrix: CoverageCell[] = [
     ],
   },
   {
+    key: "industry_leadership_signals",
+    label: "行业领袖与关键人物信号",
+    queries: [
+      "过去72小时 全球科技 金融 汽车 能源 医药 行业领袖 创始人 CEO 公开表态 警告 呼吁 联名 行业趋势 市场影响",
+      "past 72 hours industry leaders founders CEOs agree warn call for pause slow down regulation investment market impact",
+      "latest influential executives investors policymakers interview speech podcast statement changed industry expectations",
+    ],
+  },
+  {
     key: "cross_asset",
     label: "跨资产价格信号",
     queries: [

@@ -18,7 +18,31 @@ SYSTEM = """你是“金融巨子”的内容增长策略总编。根据抖音�
 输出一个JSON对象，不要Markdown：
 {"summary":"本轮一句话结论","dataBoundary":"样本与缺失说明","insights":[{"finding":"发现","evidence":"具体对比数据","confidence":"high|medium|low"}],"topicDirectives":["可直接用于选题排序的规则"],"researchDirectives":["可直接用于研究底稿的规则"],"scriptDirectives":["可直接用于口播成稿的规则"],"avoid":["需要停止或降权的做法"],"experiments":[{"name":"实验名","change":"只改变一个变量","successMetric":"观察指标","sampleSize":"建议样本"}]}。
 
-每类directive最多6条，每条必须具体、可执行且不绑定某一家公司的偶然性。动态策略不得推翻事实核验、合规边界、纯口播输出、当前事件主体、标题承诺和禁止编造等稳定Skill硬规则。保留已被数据支持的旧策略，推翻旧策略时说明新证据。"""
+每类directive最多6条，每条必须是已经从历史样本抽象出来的结论：只写“什么条件下采取什么动作”，不得出现任何历史作品的公司名、人名、标题、原句、发布日期、单条播放量或一次性事件数字，不得在directive中写“如/例如/比如/证据显示”。这些历史分析过程只能写入insights.evidence和sampleDigest，绝不能进入directive。动态策略不得推翻事实核验、合规边界、纯口播输出、当前事件主体、标题承诺和禁止编造等稳定Skill硬规则。保留已被数据支持的旧策略，推翻旧策略时说明新证据。"""
+
+
+def _abstract_directive(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.split(r"[；;]", text, maxsplit=1)[0]
+    text = re.split(r"(?:例如|比如|譬如|举例|证据(?:显示|是|为)?)[：:，,]", text, maxsplit=1)[0]
+    text = re.sub(r"[（(](?:如|例如|比如)[^）)]*[）)]", "", text)
+    text = re.sub(r"[\u4e00-\u9fffA-Za-z·]{2,20}(?=(?:高|低)留存样本)", "", text)
+    return text.rstrip("，,。；;：: ").strip()
+
+
+def _sanitize_strategy(strategy):
+    result = dict(strategy)
+    for key in ("topicDirectives", "researchDirectives", "scriptDirectives", "avoid"):
+        values = strategy.get(key) if isinstance(strategy.get(key), list) else []
+        clean = []
+        for value in values:
+            directive = _abstract_directive(value)
+            if directive and directive not in clean:
+                clean.append(directive)
+        result[key] = clean[:6]
+    return result
 
 PROMOTION_SYSTEM = """你是内容方法论审计员。输入包含多轮抖音策略迭代及每轮去重后的作品指标摘要。找出跨轮反复成立、可能晋升为稳定Skill的通用规则。
 
@@ -101,7 +125,7 @@ def generate_strategy_iteration(request_data):
             response_format={"type": "json_object"},
             extra_body={"thinking": {"type": "disabled"}},
         )
-        strategy = parse_json(response.choices[0].message.content or "")
+        strategy = _sanitize_strategy(parse_json(response.choices[0].message.content or ""))
         usage = getattr(response, "usage", None)
         iteration_id = f"strategy-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         iteration = {

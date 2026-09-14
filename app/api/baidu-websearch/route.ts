@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|investor\.|\/ir(?:\/|-)|gcs-web|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
 const socialPattern = /twitter|weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
 const operatingCatalystPattern = /发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|大客户|召回|停产|延期|product launch|new model|pricing|preorder|orders|deliveries|sales|production|recall/i;
+const leadershipSignalPattern = /行业领袖|创始人|企业家|首席执行官|CEO|投资大师|关键人物|公开表态|发言|演讲|采访|警告|呼吁|支持|反对|联名|共识|放缓|暂停|监管|founder|chief executive|CEO|industry leader|investor|policymaker|statement|speech|interview|warns?|calls? for|supports?|opposes?|agree|slow down|pause/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const SOURCE_WINDOW_HOURS = 72;
 const SOURCE_WINDOW_MS = SOURCE_WINDOW_HOURS * 3_600_000;
@@ -251,8 +252,9 @@ export async function POST(request: Request) {
     for (const query of baseQueries) {
       const calendarQuery = /财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(query);
       const operatingCatalystQuery = /发布会|新品|新车|新机|产品定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|product launch|new model|pricing|preorder/i.test(query);
+      const leadershipSignalQuery = /行业领袖|关键人物|创始人|CEO|公开表态|警告|呼吁|联名|industry leaders|founders|executives|policymakers|statement|speech|interview/i.test(query);
       try {
-        const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery || operatingCatalystQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
+        const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery || operatingCatalystQuery || leadershipSignalQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
       } catch (error) {
         previousRequestAt = Date.now();
         failedQueries.push({ stage: "基础召回", query, error: error instanceof Error ? error.message : String(error) });
@@ -351,9 +353,14 @@ export async function POST(request: Request) {
     const recentOperatingCatalystEvents = events.filter((event: any) =>
       event.ageHours <= 24 && isOperatingCatalystEvent(event) && hasVerifiedAudienceSignal(event),
     ).slice(0, 4);
+    const recentLeadershipEvents = events.filter((event: any) =>
+      event.ageHours <= 24
+      && leadershipSignalPattern.test(`${event.title} ${event.summary} ${(event.actors || []).join(" ")} ${(event.actions || []).join(" ")}`)
+      && hasVerifiedAudienceSignal(event),
+    ).slice(0, 3);
     // 事件榜前列只要求模型生成分析候选，不再自动获得高潜池席位。
     // 保护名额只属于有可验证声量/价格信号的财报与经营催化剂。
-    const protectedEvents = [...new Map([...recentCorporateEvents, ...recentOperatingCatalystEvents].map((event: any) => [event.id, event])).values()];
+    const protectedEvents = [...new Map([...recentCorporateEvents, ...recentOperatingCatalystEvents, ...recentLeadershipEvents].map((event: any) => [event.id, event])).values()];
     for (const event of protectedEvents) {
       if (!modelCoveredEventIds.has(event.id) && !modelCoveredEventIds.has(event.eventId)) augmentedAnalyses.push(standaloneAnalysisForEvent(event));
     }
@@ -511,7 +518,7 @@ export async function POST(request: Request) {
     }, {});
 
     return Response.json({
-      ok: true, pipelineVersion: "evidence-attention-balance-v7", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
+      ok: true, pipelineVersion: "evidence-attention-balance-v8", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
       followUpQueryCount: allFollowUpQueries.length, followUpQueries: allFollowUpQueries, references,
       collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: SOURCE_WINDOW_HOURS,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
@@ -524,6 +531,7 @@ export async function POST(request: Request) {
         corporateCalendarCompanies: corporateFollowUp.companies,
         recentCorporateEventCount: recentCorporateEvents.length,
         recentOperatingCatalystEventCount: recentOperatingCatalystEvents.length,
+        recentLeadershipEventCount: recentLeadershipEvents.length,
         audienceQualifiedEventCount: events.filter(hasVerifiedAudienceSignal).length,
         usCandidateCount: topicCandidates.filter(isUSLinkedTopic).length,
         usSelectedCount: topics.filter(isUSLinkedTopic).length,

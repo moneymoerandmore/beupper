@@ -65,6 +65,8 @@ const extractionSystem = `你是全球财经新闻事件编辑。你的任务不
 
 社交平台内容只用于识别讨论度、主要分歧、拥挤预期和待核验线索，不能把单个用户观点、未经证实数字或涨跌预测写成事实。与某家公司财报有关的雪球、X/Twitter、Reddit讨论，优先把evidenceId并入对应公司事件；只有讨论本身发生异常扩散且构成独立市场现象时，才建立stage=discussion的事件。公司正式披露与盘前/盘后价格变化是两件事件：前者family=corporate，后者family=market_move，并通过transmission描述先后关系。
 
+行业领袖、头部公司创始人或CEO、重要投资人和政策制定者的最新公开讲话、采访、联名立场或罕见共识，本身可以是独立事件。必须写清“谁在何时说了什么、相对过去新增了什么立场、可能改变哪项行业预期”，不能因为尚无即时股价反应就丢弃；但评论者转述、旧语录翻炒或没有原始出处的标题党仍应进入未分类。多人对同一议题形成一致或明显冲突立场时，应合并为一个共识/分歧事件，并保留各自证据。
+
 只输出JSON对象：{"events":[{"eventId":"临时稳定ID","title":"具体事实标题","summary":"两句事实摘要","occurredAt":"事件动作本身的ISO时间或空字符串","isCurrentEvent":true,"currentAction":"72小时内实际新增的动作","timeEvidence":"支持事件时间的证据原句，不超过60字","timeConfidence":"high|medium|low","family":"market_move|monetary|fiscal_macro|regulation_trade|corporate|industry_supply|capital_flow|geopolitics|credit_risk|commodity_fx_rates|other","stage":"rumor|discussion|proposal|official|implemented|market_reaction|unknown","actors":[],"actions":[],"objects":[],"sectors":[],"markets":[],"assets":[],"transmission":[],"evidenceIds":[],"marketReaction":0,"novelty":0,"confidence":0}],"unclassifiedEvidenceIds":[]}。后三个分数为0到100。保持紧凑：title不超过45字，summary不超过100字，每个数组最多8项，不要重复解释。禁止Markdown、禁止换行缩进、禁止输出未要求字段。`;
 
 const operatingCatalystPattern = /发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|大客户|召回|停产|延期|product launch|new model|pricing|preorder|orders|deliveries|sales|production|recall/i;
@@ -207,7 +209,7 @@ export async function standardizeFinancialEvents(apiKey: string, references: Sem
     { role: "user", content: `合并以下候选事件并重新编号：\n${JSON.stringify(mergeInput)}` },
   ], "跨批事件合并");
   receipts.push(merged.receipt);
-  const events = (merged.data.events || []).map((event: any, index: number) => cleanEvent(event, `event-${index + 1}`));
+  const events: SemanticEvent[] = (merged.data.events || []).map((event: any, index: number) => cleanEvent(event, `event-${index + 1}`));
   (merged.data.unclassifiedEvidenceIds || []).forEach((id: any) => unclassified.add(String(id)));
   // Cross-batch merging can silently drop a small corporate catalyst even when
   // Baidu already recalled it. Audit every high-signal product/operating source;
@@ -241,16 +243,16 @@ export async function standardizeFinancialEvents(apiKey: string, references: Sem
 
 export async function deriveMarketFollowUpQueries(apiKey: string, references: SemanticReference[]) {
   const actionableReferences = references
-    .filter((item) => /收盘|盘前|盘后|close|closed|premarket|after.hours|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call|发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|product launch|new model|pricing|preorder|orders|deliveries|sales|雪球|twitter|x\.com|reddit|热议|讨论|sentiment/i.test(`${item.title} ${item.snippet} ${item.site} ${item.url}`))
+    .filter((item) => /收盘|盘前|盘后|close|closed|premarket|after.hours|涨|跌|surge|plunge|rally|selloff|财报|业绩|盈利|指引|公告|披露|earnings|results|guidance|filing|conference call|发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|product launch|new model|pricing|preorder|orders|deliveries|sales|公开表态|发言|演讲|采访|警告|呼吁|支持|反对|联名|共识|statement|speech|interview|warns?|calls? for|supports?|opposes?|agree|slow down|pause|雪球|twitter|x\.com|reddit|热议|讨论|sentiment/i.test(`${item.title} ${item.snippet} ${item.site} ${item.url}`))
     .sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0))
     .slice(0, 45)
     .map((item) => ({ title: item.title, summary: item.snippet.slice(0, 320), publishedAt: item.publishedAt }));
   if (!actionableReferences.length) return { queries: [], receipt: "" };
   const result = await deepSeekJson(apiKey, [
-    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情、公司公告、财报日历、上市公司产品与经营动作和社交讨论。生成二次检索：第一类追查指数、行业或个股异动的具体原因；第二类逐一核验日历中今天应发布业绩的重要上市公司；第三类对重要财报公司补齐正式披露与预期差、实时股价与成交、投资者核心分歧；第四类对动态发现的新品发布、新车新机、定价、预售订单、交付销量、量产扩产、中标、召回停产等公司催化剂，补齐官方发布原文、关键经营数字及同公司本股从发布前到发布后的价格/资金反应。预告只负责发现主体，绝不能当成已经发生。只追输入中动态出现的实体，不得沿用历史偏好或预设公司名单，不得生成泛泛宏观查询。优先覆盖不同公司；同一公司最多生成官方事实、实时价格、社交分歧三条功能不同的查询，禁止近义重复。最多12条，互不重复，优先最近24小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
+    { role: "system", content: "你是实时财经编辑。输入同时包含最新行情、公司公告、财报日历、上市公司产品与经营动作、关键人物公开表态和社交讨论。生成二次检索：第一类追查指数、行业或个股异动的具体原因；第二类逐一核验日历中今天应发布业绩的重要上市公司；第三类对重要财报公司补齐正式披露与预期差、实时股价与成交、投资者核心分歧；第四类对动态发现的公司经营催化剂补齐官方原文、经营数字及本股反应；第五类对行业领袖、头部公司创始人或CEO、重要投资人、政策制定者的最新讲话、采访、联名立场或罕见共识，补齐原始讲话/视频/帖文、准确原话语境、其他关键人物的同意或反对，以及行业和相关上市公司的预期变化。没有即时股价变化也要追踪，但旧语录翻炒不得追踪。预告只负责发现主体，绝不能当成已经发生。只追输入中动态出现的实体，不得沿用历史偏好或预设人物名单，不得生成泛泛宏观查询。每个事件最多生成原始出处、交叉验证、市场/行业反应三条功能不同的查询，禁止近义重复。最多15条，互不重复，优先最近24小时。只输出JSON：{\"queries\":[\"...\"]}。每条不超过60个字符。" },
     { role: "user", content: `北京时间${new Date().toISOString()}，最新可追踪证据：${JSON.stringify(actionableReferences)}` },
   ], "行情与经营动作二次查询");
-  return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 12), receipt: result.receipt };
+  return { queries: [...new Set((result.data.queries || []).map(String).map((item: string) => item.trim()).filter(Boolean))].slice(0, 15), receipt: result.receipt };
 }
 
 export async function deriveCorporateReleaseFollowUpQueries(apiKey: string, references: SemanticReference[]) {
@@ -294,6 +296,8 @@ export async function buildCausalAnalysisTopics(apiKey: string, events: any[], s
 先识别 observed events：指数、行业、公司、债券、汇率或商品的实际价格与资金变化；再识别 causal events：政策监管、财报指引、利率流动性、产业供需、资本流向、地缘冲击等。只有满足时间顺序合理、影响对象匹配、存在清晰传导机制时才能连接。一个监管事件可能解释某个细分板块，不得擅自解释整个大盘；相关性不能写成已确认因果。
 
 优先形成“明确实体 + 当天新动作 + 价格或利益冲击 + 具体原因 + 可验证机制”的选题。没有充分根因的重大行情保留为 unresolved；没有明显行情但影响重大的原因事件必须形成可独立成立的分析题，不能因为暂时缺少股价反应而从选题池消失。事件榜前8名必须各自出现在至少一个题目的 observedEventIds 或 causalEventIds 中；一个题可以覆盖确有因果关系的多个事件，但禁止为了完成覆盖而虚构联系。禁止给任何特定国家、汇率、行业或用户曾提及事件固定加权。
+
+行业关键人物的公开表态不是娱乐八卦。若多位具备真实决策权或资本配置权的人对技术路线、监管、资本开支、风险边界形成罕见共识或冲突，应把它作为“预期变化的领先信号”构造选题：解释他们为何此时表态、各自利益与约束是否一致、会先改变融资/资本开支/监管概率/估值中的哪一项，以及用什么后续动作验证。不得把名气本身当重要性，也不得要求先有股价异动才入选。
 
 同时判断两条互不替代的传播通道：search 代表用户会主动搜索准确公司、资产、公告动作或异动数字；recommendation 代表即使用户没搜索，也能立刻理解反常价格、谁获益谁承担成本的冲突；两者都强才是 dual。searchDemand必须基于证据中的当日新动作、明确搜索实体、数字冲击和讨论扩散，不得因公司知名度凭空给高分。stakeholderConflict衡量“谁在买卖、谁获益、谁承担稀释/成本/风险”是否具体；entitySpecificity衡量标题能否落到不可替换的公司、资产或政策动作；timelinessOpportunity衡量现在发布是否仍处于盘前、盘后、财报、IPO、配售、监管、停牌或剧烈异动的搜索窗口。
 

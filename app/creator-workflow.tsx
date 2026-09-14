@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { downloadCover, localizeCoverUrl } from "./image-download";
 import { apiUrl, readJsonResponse } from "./api-client";
+import { abstractStrategyProfile, researchStrategySummary } from "./strategy-profile";
 
 const defaultTopic = "当前选题尚未锁定";
 
@@ -95,10 +96,8 @@ function researchForTopic(currentTopic: string, context: any = {}, strategyProfi
   ];
   return [
     {
-      key: "数据迭代", title: "抖音真实反馈形成的本轮策略", status: strategyProfile?.createdAt ? "动态生效" : "等待数据",
-      body: strategyProfile?.createdAt
-        ? `本轮基于${strategyProfile.sampleCount || 0}个已匹配投稿项目形成。选题策略：${(strategyProfile.topicDirectives || []).join("；") || "无新增"}。底稿策略：${(strategyProfile.researchDirectives || []).join("；") || "无新增"}。成稿策略：${(strategyProfile.scriptDirectives || []).join("；") || "无新增"}。这些规则是基于历史样本的可证伪假设；与当前事实证据、选题主体或合规护栏冲突时不采用。`
-        : "尚无抖音数据迭代记录，继续执行当前基础方法论；不得虚构平台反馈。",
+      key: "策略约束", title: "历史反馈沉淀的通用研究结论", status: strategyProfile?.createdAt ? "已隔离案例" : "等待数据",
+      body: researchStrategySummary(strategyProfile),
     },
     {
       key: "事实底座", title: "先确认能说出口的事实", status: "必用 · 硬门",
@@ -220,7 +219,9 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
   const [metricResult, setMetricResult] = useState<any>(null);
   const [metricLoading, setMetricLoading] = useState(false);
   const [metricError, setMetricError] = useState("");
-  const currentResearch = useMemo(() => researchForTopic(topic, topicContext, strategyProfile), [topic, topicContext, strategyProfile]);
+  const effectiveStrategyProfile = useMemo(() => abstractStrategyProfile(strategyProfile), [strategyProfile]);
+  const currentResearch = useMemo(() => researchForTopic(topic, topicContext, effectiveStrategyProfile), [topic, topicContext, effectiveStrategyProfile]);
+  const modelResearch = useMemo(() => currentResearch.filter((item) => item.key !== "策略约束"), [currentResearch]);
   const currentPackages = packagingOptions;
   const selectedPackage = currentPackages[packageIndex] || {
     title: topic, hook: "", cover: "", type: "", motive: "", keyword: topic.slice(0, 28),
@@ -473,8 +474,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           model: scriptModel || "deepseek-v4-pro",
           topic,
           topicContext,
-          research: currentResearch,
-          strategyProfile,
+          research: modelResearch,
+          strategyProfile: effectiveStrategyProfile,
         }),
         signal: AbortSignal.timeout(600_000),
       });
@@ -528,8 +529,8 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           model: scriptModel || "deepseek-v4-pro",
           topic,
           topicContext,
-          research: currentResearch,
-          strategyProfile,
+          research: modelResearch,
+          strategyProfile: effectiveStrategyProfile,
           packaging: selectedPackage,
           packagingOptions: currentPackages,
           workflowContext: {

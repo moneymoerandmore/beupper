@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".python_packages"))
 
 import openai
+
+from strategy_iteration import _sanitize_strategy
 import httpx
 
 
@@ -354,12 +356,15 @@ def generate_script(request_data):
     api_key = str(request_data.get("apiKey", "")).strip()
     model = str(request_data.get("model", "deepseek-v4-pro")).strip().lower() or "deepseek-v4-pro"
     topic = str(request_data.get("topic", "")).strip()
-    research = request_data.get("research") or []
+    research = [
+        item for item in (request_data.get("research") or [])
+        if isinstance(item, dict) and item.get("key") not in {"数据迭代", "策略约束"}
+    ]
     packaging = request_data.get("packaging") or {}
     topic_context = dict(request_data.get("topicContext") or {})
     packaging_options = request_data.get("packagingOptions") or []
     workflow_context = request_data.get("workflowContext") or {}
-    strategy = request_data.get("strategyProfile") or {}
+    strategy = _sanitize_strategy(request_data.get("strategyProfile") or {})
     if not api_key or not topic or not isinstance(research, list):
         return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key、选题或研究底稿。"}
 

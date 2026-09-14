@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { apiUrl } from "./api-client";
+import { abstractStrategyProfile } from "./strategy-profile";
 
-const hotspotPipelineVersion = "evidence-attention-balance-v7";
+const hotspotPipelineVersion = "evidence-attention-balance-v8";
 
 function sourceUrlFor(item: any) {
   const candidate = item?.evidence?.find((entry: any) => entry?.url)?.url;
@@ -92,7 +93,7 @@ export function BaiduSourcePanel({ notify, onValidated, onScan }: { notify: (mes
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey, deepseekApiKey, action,
-          strategyProfile: JSON.parse(window.localStorage.getItem("financial-titan-strategy-profile") || "{}"),
+          strategyProfile: abstractStrategyProfile(JSON.parse(window.localStorage.getItem("financial-titan-strategy-profile") || "{}")),
         }),
         signal: AbortSignal.timeout(action === "scan" ? 900_000 : 40_000),
       });

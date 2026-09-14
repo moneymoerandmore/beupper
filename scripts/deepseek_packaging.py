@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".python_packages")
 import httpx
 import openai
 
+from strategy_iteration import _sanitize_strategy
+
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "package-financial-video" / "SKILL.md"
 SYSTEM = """你是“金融巨子”的财经视频包装总编。你的工作不是写正文，而是从当前实时热点的完整证据中，生成三套真正属于这一次事件的标题、Hook、封面文案与视觉方向。禁止调用历史题目模板，禁止把同属外汇、科技或政策类别的旧事件替换进来。
@@ -76,8 +78,11 @@ def generate_packaging(request_data):
     model = str(request_data.get("model", "deepseek-v4-pro")).strip().lower() or "deepseek-v4-pro"
     topic = str(request_data.get("topic", "")).strip()
     context = request_data.get("topicContext") or {}
-    research = request_data.get("research") or []
-    strategy = request_data.get("strategyProfile") or {}
+    research = [
+        item for item in (request_data.get("research") or [])
+        if isinstance(item, dict) and item.get("key") not in {"数据迭代", "策略约束"}
+    ]
+    strategy = _sanitize_strategy(request_data.get("strategyProfile") or {})
     if not api_key or not topic:
         return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key 或当前实时选题。"}
 
@@ -89,7 +94,6 @@ def generate_packaging(request_data):
         "researchBrief": research,
         "latestDouyinStrategy": {
             "dataBoundary": strategy.get("dataBoundary", ""),
-            "topicDirectives": strategy.get("topicDirectives", []),
             "researchDirectives": strategy.get("researchDirectives", []),
             "scriptDirectives": strategy.get("scriptDirectives", []),
             "avoid": strategy.get("avoid", []),
