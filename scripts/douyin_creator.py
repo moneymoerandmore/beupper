@@ -107,6 +107,45 @@ def _walk(value):
         for child in value: yield from _walk(child)
 
 
+def _status_values(item):
+    """Keep moderation facts separate from performance metrics.
+
+    Creator Center moves these fields between top-level/status/review objects,
+    so inspect nested dictionaries but never infer a restriction from low views.
+    """
+    nodes = list(_walk(item))
+    def pick(*keys):
+        for node in nodes:
+            value = _first(node, *keys)
+            if value not in (None, "", []): return value
+        return None
+    def flag(*keys):
+        value = pick(*keys)
+        if isinstance(value, str): return value.strip().lower() in {"1", "true", "yes"}
+        return bool(value) if value is not None else False
+    risk = pick("risk_infos", "risk_info", "riskInfos")
+    risk_notice = ""
+    risk_type = None
+    if isinstance(risk, list) and risk:
+        first = risk[0] if isinstance(risk[0], dict) else {}
+        risk_notice = str(_first(first, "content", "text", "message", "reason") or "")
+        risk_type = _first(first, "type", "risk_type", "riskType")
+    elif isinstance(risk, dict):
+        risk_notice = str(_first(risk, "content", "text", "message", "reason") or "")
+        risk_type = _first(risk, "type", "risk_type", "riskType")
+    return {
+        "inReviewing": flag("in_reviewing", "inReviewing"),
+        "isProhibited": flag("is_prohibited", "isProhibited", "prohibited"),
+        "isPrivate": flag("is_private", "isPrivate", "private"),
+        "isDeleted": flag("is_delete", "is_deleted", "isDeleted", "deleted"),
+        "selfSee": flag("self_see", "selfSee", "only_self_visible"),
+        "reviewStatus": pick("review_status", "reviewStatus"),
+        "riskNotice": risk_notice,
+        "riskType": risk_type,
+        "restrictionReason": str(pick("prohibit_reason", "restriction_reason", "violation_reason") or ""),
+    }
+
+
 def _normalize_record(item):
     title = _first(item, "title", "video_title", "item_title", "desc", "name")
     if not isinstance(title, str) or len(title.strip()) < 4: return None
@@ -143,6 +182,7 @@ def _normalize_record(item):
         "url": _first(merged, "share_url", "video_url", "url") or "",
         "collectedAt": datetime.now(timezone.utc).isoformat(), "source": "douyin_creator_center",
         "detailCollected": False,
+        **_status_values(item),
     }
 
 
@@ -162,7 +202,7 @@ def _detail_values(item):
         "coverCtr": ("cover_ctr", "cover_click_rate"),
         "followers": ("net_follow_fans", "follow_count", "fans_count"),
     }
-    values = {"platformId": item_id, "title": title.strip() if isinstance(title, str) else ""}
+    values = {"platformId": item_id, "title": title.strip() if isinstance(title, str) else "", **_status_values(item)}
     found = False
     analytics_found = False
     for target, keys in aliases.items():
@@ -175,7 +215,10 @@ def _detail_values(item):
             if target in {"averageWatchSeconds", "averagePlayRatio", "completionRate",
                           "twoSecondBounceRate", "fiveSecondCompletionRate", "coverCtr"}:
                 analytics_found = True
-    if found:
+    if found or any(values.get(key) not in (None, "", False) for key in (
+        "inReviewing", "isProhibited", "isPrivate", "isDeleted", "selfSee",
+        "reviewStatus", "riskNotice", "riskType", "restrictionReason"
+    )):
         values["detailCollected"] = analytics_found
         return values
     return None

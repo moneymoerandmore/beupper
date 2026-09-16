@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: ccl_simplesnappy
+Version: 0.4
+Summary: A pure Python Snappy decompressor with no dependencies.
+Author-email: Alex Caithness <research@cclsolutionsgroup.com>
+Project-URL: Homepage, https://github.com/cclgroupltd/ccl_simplesnappy
+Project-URL: Issues, https://github.com/cclgroupltd/ccl_simplesnappy/issues
+Keywords: digital forensics,dfir,chrome,chromium,browser
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Development Status :: 4 - Beta
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: license-file

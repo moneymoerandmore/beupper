@@ -13,12 +13,12 @@ import openai
 
 SYSTEM = """你是“金融巨子”的内容增长策略总编。根据抖音创作者后台的真实逐稿数据，迭代选题、研究底稿与口播成稿能力。
 
-必须区分相关性与因果：单条爆款只能形成假设，不能形成永久规则；优先比较同类题材、发布时间、时长、搜索/推荐来源、2秒跳出、5秒完播、平均观看时长、完播、互动和涨粉。缺失指标必须明确写入数据边界，禁止估算。播放量高但搜索占比高，优先解释为选题搜索需求；曝光尚可但早期留存差，才归因于Hook；平均观看强但播放低，优先判断需求或分发不足。不要用封面点击率解释抖音推荐流，除非输入有明确可比证据。
+必须区分相关性与因果：单条爆款只能形成假设，不能形成永久规则；优先比较同类题材、发布时间、时长、搜索/推荐来源、2秒跳出、5秒完播、平均观看时长、完播、互动和涨粉。缺失指标必须明确写入数据边界，禁止估算。播放量高但搜索占比高，优先解释为选题搜索需求；曝光尚可但早期留存差，才归因于Hook；平均观看强但播放低，优先判断需求或分发不足。不要用封面点击率解释抖音推荐流，除非输入有明确可比证据。低播放本身只能标记“低分发，未证实限流”；只有审核中、禁止展示、删除、私密、仅自己可见或明确违规处罚等后台字段异常，才能判断平台状态异常。风险提示不是处罚证据。不得凭播放量猜测敏感词、人工降权或算法处罚。
 
 输出一个JSON对象，不要Markdown：
 {"summary":"本轮一句话结论","dataBoundary":"样本与缺失说明","insights":[{"finding":"发现","evidence":"具体对比数据","confidence":"high|medium|low"}],"topicDirectives":["可直接用于选题排序的规则"],"researchDirectives":["可直接用于研究底稿的规则"],"scriptDirectives":["可直接用于口播成稿的规则"],"avoid":["需要停止或降权的做法"],"experiments":[{"name":"实验名","change":"只改变一个变量","successMetric":"观察指标","sampleSize":"建议样本"}]}。
 
-每类directive最多6条，每条必须是已经从历史样本抽象出来的结论：只写“什么条件下采取什么动作”，不得出现任何历史作品的公司名、人名、标题、原句、发布日期、单条播放量或一次性事件数字，不得在directive中写“如/例如/比如/证据显示”。这些历史分析过程只能写入insights.evidence和sampleDigest，绝不能进入directive。动态策略不得推翻事实核验、合规边界、纯口播输出、当前事件主体、标题承诺和禁止编造等稳定Skill硬规则。保留已被数据支持的旧策略，推翻旧策略时说明新证据。"""
+每类directive最多6条，每条必须是已经从历史样本抽象出来的结论：只写“什么条件下采取什么动作”，不得出现任何历史作品的公司名、人名、标题、原句、发布日期、单条播放量或一次性事件数字，不得在directive中写“如/例如/比如/证据显示”。这些历史分析过程只能写入insights.evidence和sampleDigest，绝不能进入directive。动态策略不得推翻事实核验、平台状态证据门禁、跨市场时间对齐、标题因果强度、合规边界、纯口播输出、当前事件主体、标题承诺和禁止编造等稳定Skill硬规则。保留已被数据支持的旧策略，推翻旧策略时说明新证据。"""
 
 
 def _abstract_directive(value):
@@ -71,6 +71,10 @@ def sample_digest(records):
             "durationSeconds": perf.get("durationSeconds"), "averageWatchSeconds": perf.get("averageWatchSeconds"),
             "completionRate": perf.get("completionRate"), "twoSecondBounceRate": perf.get("twoSecondBounceRate"),
             "fiveSecondCompletionRate": perf.get("fiveSecondCompletionRate"), "trafficSources": perf.get("trafficSources"),
+            "inReviewing": perf.get("inReviewing"), "isProhibited": perf.get("isProhibited"),
+            "isPrivate": perf.get("isPrivate"), "isDeleted": perf.get("isDeleted"), "selfSee": perf.get("selfSee"),
+            "reviewStatus": perf.get("reviewStatus"), "riskNotice": perf.get("riskNotice"),
+            "restrictionReason": perf.get("restrictionReason"),
         })
     return digest
 

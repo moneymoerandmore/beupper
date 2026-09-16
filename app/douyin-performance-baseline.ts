@@ -15,6 +15,15 @@ export type DouyinPerformanceRecord = {
   completionRate?: number;
   twoSecondBounceRate?: number;
   fiveSecondCompletionRate?: number;
+  inReviewing?: boolean;
+  isProhibited?: boolean;
+  isPrivate?: boolean;
+  isDeleted?: boolean;
+  selfSee?: boolean;
+  reviewStatus?: number | string;
+  riskNotice?: string;
+  riskType?: number | string;
+  restrictionReason?: string;
   trafficSources?: Record<string, number>;
   collectedAt: string;
   source: "douyin_creator_center";
@@ -74,6 +83,9 @@ export function median(values: number[]) {
 }
 
 export function diagnoseDouyinPerformance(item: DouyinPerformanceRecord, medianViews = 1008, medianWatchSeconds = 33.3) {
+  if (item.isProhibited || item.isDeleted || item.isPrivate || item.selfSee || item.inReviewing || item.restrictionReason) {
+    return "平台状态异常";
+  }
   const searchShare = item.trafficSources?.搜索 || 0;
   const recommendationShare = item.trafficSources?.推荐页 || 0;
   if (searchShare >= 60 && item.views >= medianViews * 3) return "搜索需求命中";
@@ -82,6 +94,6 @@ export function diagnoseDouyinPerformance(item: DouyinPerformanceRecord, medianV
   if (item.fiveSecondCompletionRate != null && item.fiveSecondCompletionRate < 45) return "前5秒承诺不足";
   if (item.averageWatchSeconds < medianWatchSeconds) return "内容留存不足";
   if (item.averageWatchSeconds >= 45 && item.views < medianViews) return "内容强但需求不足";
-  if (item.views < medianViews) return "推荐测试未放大";
+  if (item.views < medianViews) return "低分发，未证实限流";
   return "表现高于基线";
 }

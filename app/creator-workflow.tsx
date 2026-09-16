@@ -536,7 +536,7 @@ export function CreatorWorkflow({ notify, selectedTopic, selectedTopicData, star
           workflowContext: {
             topicApproved,
             packageApproved,
-            editorialJudgment: `围绕“${topic}”区分已确认事实、市场推断和待验证条件；重点解释跨市场传导，而不是复述新闻。`,
+          editorialJudgment: `围绕“${topic}”区分已确认事实、市场推断和待验证条件；如确有跨市场关系，先对齐交易日、时区与信息截点，再解释有证据支持的传导，不能把非重叠时段的反向涨跌当成同一消息的同步反应。`,
             targetLength: "1000—3000个汉字",
             outputForm: "可直接交给花生AI的纯口播正文",
           },

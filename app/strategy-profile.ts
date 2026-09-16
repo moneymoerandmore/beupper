@@ -30,6 +30,6 @@ export function abstractStrategyProfile(profile: StrategyProfile = {}) {
 export function researchStrategySummary(profile: StrategyProfile = {}) {
   const rules = abstractStrategyProfile(profile).researchDirectives || [];
   return rules.length
-    ? `历史投稿只沉淀为以下通用研究约束：${rules.join("；")}。历史作品、公司、标题和单次表现仅作为复盘证据，不属于本题事实。`
+    ? `历史投稿只沉淀为以下通用研究约束：${rules.join("；")}。历史作品、公司、标题和单次表现仅作为复盘证据，不属于本题事实；这些策略不得覆盖事实核验、平台状态证据、跨市场时间对齐和标题因果强度门禁。`
     : "历史反馈尚未形成可用于本题的通用研究约束；不得把历史稿件案例带入当前底稿。";
 }
