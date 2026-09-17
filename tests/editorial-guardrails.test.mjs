@@ -8,6 +8,7 @@ test("performance diagnosis does not equate low views with throttling", () => {
   const source = read("app/douyin-performance-baseline.ts");
   assert.match(source, /平台状态异常/);
   assert.match(source, /低分发，未证实限流/);
+  assert.match(source, /观察中，逐稿数据未返回/);
   assert.match(source, /isProhibited.*isDeleted.*isPrivate.*selfSee.*inReviewing/s);
 });
 

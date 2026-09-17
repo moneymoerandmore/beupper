@@ -71,6 +71,10 @@ export function StrategyIterationPanel({ notify }: { notify: (message: string) =
         <header><div><span>第 {items.length - index} 次迭代</span><h3>{item.summary || "内容策略复盘"}</h3></div><time>{new Date(item.createdAt).toLocaleString("zh-CN")}</time></header>
         <div className="strategyMeta"><span>{item.sampleCount || 0} 个匹配项目</span><span>{item.model || "DeepSeek"}</span><span>{item.receipt ? "API 已回执" : "无回执"}</span></div>
         {item.dataBoundary && <p className="strategyBoundary">数据边界：{item.dataBoundary}</p>}
+        {!!item.focus?.length && <div className="strategyFocus"><b>本轮优先复盘 · {item.focus.length} 条新稿/变化稿</b>{item.focus.map((row: any, i: number) => {
+          const review = (item.focusReviews || [])[i] || {};
+          return <div key={row.id || i}><strong>{row.title}</strong><span>{row.reason} · 本次 {row.views} 播放{row.previousViews == null ? "" : `，较上次 ${row.viewDelta >= 0 ? "+" : ""}${row.viewDelta}`} · {row.platformStatus === "abnormal" ? "后台状态异常" : "未见明确处罚状态"}</span>{review.verdict && <p>{review.verdict}</p>}{review.probableCause && <p>内容假设：{review.probableCause}</p>}{review.unknowns && <small>尚不能确认：{review.unknowns}</small>}{review.nextCheck && <small>下次核对：{review.nextCheck}</small>}</div>;
+        })}</div>}
         <div className="strategyColumns">
           <section><b>选题迭代</b>{(item.topicDirectives || []).map((text: string, i: number) => <p key={i}>{text}</p>)}</section>
           <section><b>底稿迭代</b>{(item.researchDirectives || []).map((text: string, i: number) => <p key={i}>{text}</p>)}</section>

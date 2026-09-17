@@ -129,7 +129,9 @@ export default function Home() {
   }, [publications]);
   const douyinReview = useMemo(() => {
     const mature = douyinRecords.filter((item) => Number(item.views || 0) >= 40);
-    const top = [...mature].sort((a, b) => b.views - a.views).slice(0, 8);
+    const latest = [...douyinRecords].filter((item) => item.publishedAt).sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3);
+    const seen = new Set(latest.map((item) => item.id));
+    const top = [...latest, ...[...mature].sort((a, b) => b.views - a.views).filter((item) => !seen.has(item.id)).slice(0, 5)];
     const detailCount = douyinRecords.filter((item) => item.detailCollected || item.twoSecondBounceRate != null || item.fiveSecondCompletionRate != null || item.trafficSources).length;
     const collectedTimes = douyinRecords.map((item) => Date.parse(item.collectedAt || "")).filter(Number.isFinite);
     return {
@@ -344,7 +346,7 @@ export default function Home() {
         <section className="performanceReview">
           <div className="sectionTitle compact">
             <div><p className="eyebrow">DOUYIN REVIEW</p><h2>抖音历史复盘指标</h2></div>
-            <span className="engineVersion">已沉淀 {douyinReview.count} 条创作者后台数据 · {douyinReview.detailCount} 条含详细指标</span>
+            <span className="engineVersion">最新 3 条优先 · 已沉淀 {douyinReview.count} 条后台数据 · {douyinReview.detailCount} 条含详细指标</span>
           </div>
           <div className="reviewBenchmarks">
             <span><small>成熟作品中位播放</small><b>{douyinReview.medianViews.toLocaleString("zh-CN")}</b></span>
@@ -356,7 +358,7 @@ export default function Home() {
           <div className="reviewTable">
             <div className="reviewRow reviewHead"><span>作品</span><span>播放</span><span>平均观看</span><span>2秒跳出</span><span>5秒完播</span><span>主流量</span><span>自动诊断</span></div>
             {douyinReview.top.map((item) => {
-              const lead = Object.entries(item.trafficSources || {}).sort((a, b) => b[1] - a[1])[0];
+              const lead = Object.entries(item.trafficSources || {}).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
               return <div className="reviewRow" key={item.id}><span title={item.title}>{item.title}</span><b>{item.views.toLocaleString("zh-CN")}</b><b>{item.averageWatchSeconds.toFixed(1)}秒</b><b>{item.twoSecondBounceRate == null ? "—" : `${item.twoSecondBounceRate}%`}</b><b>{item.fiveSecondCompletionRate == null ? "—" : `${item.fiveSecondCompletionRate}%`}</b><b>{lead ? `${lead[0]} ${lead[1]}%` : "—"}</b><em>{diagnoseDouyinPerformance(item, douyinReview.medianViews, douyinReview.medianWatchSeconds)}</em></div>;
             })}
           </div>

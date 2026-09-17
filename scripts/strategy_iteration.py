@@ -13,10 +13,12 @@ import openai
 
 SYSTEM = """你是“金融巨子”的内容增长策略总编。根据抖音创作者后台的真实逐稿数据，迭代选题、研究底稿与口播成稿能力。
 
+每次同步首先复盘本轮 focusRecords：新投稿、刚返回逐稿明细或指标显著变化的作品。逐条说明后台直接证据、相对上次同步的变化、与同期作品的差异、最可能的内容原因、不能确认的归因和下次要验证的指标。特别好或特别差都要处理；全量历史作品只用于基线与交叉验证，不得用旧爆款稀释最新异常。新作发布不足24小时或逐稿明细未返回时，先标记“观察中”，不得仅凭播放低宣布限流或确定 Hook 失败。未匹配资产的作品只能分析后台指标和标题，不能编造其底稿与正文。
+
 必须区分相关性与因果：单条爆款只能形成假设，不能形成永久规则；优先比较同类题材、发布时间、时长、搜索/推荐来源、2秒跳出、5秒完播、平均观看时长、完播、互动和涨粉。缺失指标必须明确写入数据边界，禁止估算。播放量高但搜索占比高，优先解释为选题搜索需求；曝光尚可但早期留存差，才归因于Hook；平均观看强但播放低，优先判断需求或分发不足。不要用封面点击率解释抖音推荐流，除非输入有明确可比证据。低播放本身只能标记“低分发，未证实限流”；只有审核中、禁止展示、删除、私密、仅自己可见或明确违规处罚等后台字段异常，才能判断平台状态异常。风险提示不是处罚证据。不得凭播放量猜测敏感词、人工降权或算法处罚。
 
 输出一个JSON对象，不要Markdown：
-{"summary":"本轮一句话结论","dataBoundary":"样本与缺失说明","insights":[{"finding":"发现","evidence":"具体对比数据","confidence":"high|medium|low"}],"topicDirectives":["可直接用于选题排序的规则"],"researchDirectives":["可直接用于研究底稿的规则"],"scriptDirectives":["可直接用于口播成稿的规则"],"avoid":["需要停止或降权的做法"],"experiments":[{"name":"实验名","change":"只改变一个变量","successMetric":"观察指标","sampleSize":"建议样本"}]}。
+{"summary":"本轮一句话结论","dataBoundary":"样本与缺失说明","focusReviews":[{"title":"本轮重点作品","verdict":"直接证据与当前判断","probableCause":"高概率内容原因，证据不足写待验证","unknowns":"无法确认的归因","nextCheck":"下次同步核对什么"}],"insights":[{"finding":"发现","evidence":"具体对比数据","confidence":"high|medium|low"}],"topicDirectives":["可直接用于选题排序的规则"],"researchDirectives":["可直接用于研究底稿的规则"],"scriptDirectives":["可直接用于口播成稿的规则"],"avoid":["需要停止或降权的做法"],"experiments":[{"name":"实验名","change":"只改变一个变量","successMetric":"观察指标","sampleSize":"建议样本"}]}。
 
 每类directive最多6条，每条必须是已经从历史样本抽象出来的结论：只写“什么条件下采取什么动作”，不得出现任何历史作品的公司名、人名、标题、原句、发布日期、单条播放量或一次性事件数字，不得在directive中写“如/例如/比如/证据显示”。这些历史分析过程只能写入insights.evidence和sampleDigest，绝不能进入directive。动态策略不得推翻事实核验、平台状态证据门禁、跨市场时间对齐、标题因果强度、合规边界、纯口播输出、当前事件主体、标题承诺和禁止编造等稳定Skill硬规则。保留已被数据支持的旧策略，推翻旧策略时说明新证据。"""
 
@@ -117,9 +119,11 @@ def generate_strategy_iteration(request_data):
     records = request_data.get("records") or []
     previous = request_data.get("previousStrategy") or {}
     history = request_data.get("strategyHistory") or []
-    if not api_key or not records:
-        return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key 或已匹配的抖音逐稿数据。"}
-    payload = {"previousStrategy": previous, "matchedDouyinPosts": records[:80]}
+    focus = request_data.get("focus") or []
+    focus_records = request_data.get("focusRecords") or []
+    if not api_key or not (records or focus_records):
+        return {"ok": False, "status": 400, "error": "缺少 DeepSeek API Key 或本轮抖音逐稿数据。"}
+    payload = {"focus": focus[:5], "focusRecords": focus_records[:5], "previousStrategy": previous, "matchedDouyinPosts": records[:80]}
     try:
         client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=httpx.Timeout(240.0, connect=30.0), max_retries=2)
         response = client.chat.completions.create(
@@ -136,6 +140,7 @@ def generate_strategy_iteration(request_data):
             "id": iteration_id,
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "sampleCount": len(records),
+            "focus": focus[:5],
             "sampleDigest": sample_digest(records),
             "model": getattr(response, "model", "") or model,
             "receipt": getattr(response, "id", "") or "",

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { downloadCover, localizeCoverUrl } from "./image-download";
 import { apiUrl, readJsonResponse } from "./api-client";
 import { douyinPerformanceBaseline } from "./douyin-performance-baseline";
+import { buildDouyinSyncFocus, compactDouyinSyncSnapshot } from "./douyin-sync-focus";
 
 const stepNames = ["选题确认", "研究底稿", "包装确认", "口播成稿", "花生成片", "数据回流"];
 
@@ -178,6 +179,9 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       }
       if (!response.ok) throw new Error(payload.error || "抖音创作者数据读取失败");
       const liveReviews = Array.isArray(payload.records) ? payload.records : [];
+      const previousSnapshots = JSON.parse(window.localStorage.getItem("financial-titan-douyin-sync-snapshots") || "[]");
+      const previousReviews = previousSnapshots[0]?.records || JSON.parse(window.localStorage.getItem("financial-titan-douyin-live-reviews") || "[]");
+      const focus = buildDouyinSyncFocus(previousReviews, liveReviews);
       const reviewMap = new Map<string, any>();
       for (const item of [...douyinPerformanceBaseline, ...liveReviews]) {
         const key = `${normalizeReviewTitle(item.title || "")}|${String(item.publishedAt || "").slice(0, 10)}`;
@@ -196,11 +200,17 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
       setReviewBindings(completed);
       setProjects(nextProjects);
       window.localStorage.setItem("financial-titan-douyin-live-reviews", JSON.stringify(liveReviews));
+      window.localStorage.setItem("financial-titan-douyin-last-focus", JSON.stringify({ collectedAt: new Date().toISOString(), rows: focus }));
+      window.localStorage.setItem("financial-titan-douyin-sync-snapshots", JSON.stringify([
+        { collectedAt: new Date().toISOString(), records: compactDouyinSyncSnapshot(liveReviews) },
+        ...previousSnapshots,
+      ].slice(0, 20)));
       window.dispatchEvent(new Event("financial-titan-douyin-reviews-updated"));
       window.localStorage.setItem("financial-titan-douyin-review-bindings", JSON.stringify(completed));
       window.localStorage.setItem("financial-titan-projects", JSON.stringify(nextProjects));
-      const detailedCount = liveReviews.filter((item) => item.detailCollected).length;
-      const baseMessage = `已读取 ${liveReviews.length} 条作品，其中 ${detailedCount} 条取得逐稿留存明细；自动匹配 ${Object.keys(completed).length} 个资产项目并写入反馈快照。${payload.detailComplete ? "" : " 本次数据中心明细未完整返回，可稍后再次同步。"}`;
+      const detailedCount = liveReviews.filter((item: any) => item.detailCollected).length;
+      const newest = focus[0];
+      const baseMessage = `已读取 ${liveReviews.length} 条作品，其中 ${detailedCount} 条取得逐稿留存明细；本轮重点 ${focus.length} 条${newest ? `，最新《${newest.title}》${newest.views} 播放（${newest.reason}）` : ""}；自动匹配 ${Object.keys(completed).length} 个资产项目。`;
       const deepseekApiKey = window.localStorage.getItem("financial-titan-deepseek-key") || "";
       const learningRecords = nextProjects.flatMap((project) => {
         const review = project.douyinReview;
@@ -217,14 +227,17 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
           performance: review,
         }];
       });
-      if (deepseekApiKey && learningRecords.length) {
+      if (deepseekApiKey && (learningRecords.length || focus.length)) {
         try {
           setDouyinSyncMessage(`${baseMessage} 正在用 DeepSeek 生成本轮策略迭代…`);
           const previousStrategy = JSON.parse(window.localStorage.getItem("financial-titan-strategy-profile") || "{}");
           const strategyHistory = JSON.parse(window.localStorage.getItem("financial-titan-strategy-iterations") || "[]");
           const strategyResponse = await fetch(apiUrl("/api/strategy-iterate"), {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ apiKey: deepseekApiKey, model: "deepseek-v4-pro", records: learningRecords, previousStrategy, strategyHistory }),
+            body: JSON.stringify({ apiKey: deepseekApiKey, model: "deepseek-v4-pro", records: learningRecords, focus,
+              focusRecords: focus.map((row) => learningRecords.find((record) => String(record.performance?.platformId || record.performance?.id) === row.id)
+                || { title: row.title, performance: liveReviews.find((record: any) => String(record.platformId || record.id) === row.id), projectMatched: false }),
+              previousStrategy, strategyHistory }),
             signal: AbortSignal.timeout(300_000),
           });
           const strategyPayload = await readJsonResponse(strategyResponse, "策略迭代");
@@ -241,14 +254,14 @@ export function ProjectLibrary({ notify, onEditProject }: { notify: (message: st
           window.localStorage.setItem("financial-titan-promotion-candidates", JSON.stringify([...candidateMap.values()]));
           window.localStorage.setItem("financial-titan-strategy-profile", JSON.stringify(iteration));
           window.dispatchEvent(new Event("financial-titan-strategy-updated"));
-          setDouyinSyncMessage(`${baseMessage} DeepSeek 已基于 ${iteration.sampleCount} 个匹配项目生成新策略，并注入选题、底稿和成稿。`);
+          setDouyinSyncMessage(`${baseMessage} DeepSeek 已优先复盘本轮 ${focus.length} 条重点作品，并以 ${iteration.sampleCount} 个匹配项目校验策略。`);
           notify("抖音数据已保存，新一轮内容策略已生效");
         } catch (strategyError) {
           setDouyinSyncMessage(`${baseMessage} 数据已安全保存；本轮策略迭代失败：${strategyError instanceof Error ? strategyError.message : "未知错误"}`);
           notify("抖音数据已保存，但本轮 DeepSeek 策略复盘未完成");
         }
       } else {
-        setDouyinSyncMessage(`${baseMessage}${deepseekApiKey ? " 当前没有可用于学习的匹配项目。" : " 配置 DeepSeek Key 后，下次同步将自动生成策略迭代。"}`);
+        setDouyinSyncMessage(`${baseMessage}${deepseekApiKey ? " 本轮没有新稿或显著变化，保留原有策略。" : " 配置 DeepSeek Key 后，下次同步将优先复盘新稿与变化稿。"}`);
         notify(payload.detailComplete ? "抖音逐稿详细数据已保存到对应资产" : "作品列表已保存，但逐稿留存明细未完整返回");
       }
     } catch (error) {

@@ -385,7 +385,7 @@ def sync_creator_data():
                 detail_probe = {"page": "data-center", "error": detail_error}
         return {"ok": True, "loggedIn": True, "records": result, "count": len(result),
                 "collectedAt": datetime.now(timezone.utc).isoformat(),
-                "detailComplete": bool(result) and any(row.get("detailCollected") for row in result),
+                "detailComplete": bool(result) and all(row.get("detailCollected") for row in result),
                 "message": (f"已读取 {len(result)} 条作品，并合并逐稿内容分析" if any(row.get("detailCollected") for row in result)
                             else f"已读取 {len(result)} 条作品；逐稿内容分析本次未完成"),
                 "detailProbe": detail_probe,

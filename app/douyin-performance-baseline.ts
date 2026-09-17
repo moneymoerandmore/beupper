@@ -15,6 +15,7 @@ export type DouyinPerformanceRecord = {
   completionRate?: number;
   twoSecondBounceRate?: number;
   fiveSecondCompletionRate?: number;
+  detailCollected?: boolean;
   inReviewing?: boolean;
   isProhibited?: boolean;
   isPrivate?: boolean;
@@ -85,6 +86,9 @@ export function median(values: number[]) {
 export function diagnoseDouyinPerformance(item: DouyinPerformanceRecord, medianViews = 1008, medianWatchSeconds = 33.3) {
   if (item.isProhibited || item.isDeleted || item.isPrivate || item.selfSee || item.inReviewing || item.restrictionReason) {
     return "平台状态异常";
+  }
+  if (!item.detailCollected && item.twoSecondBounceRate == null && item.fiveSecondCompletionRate == null && !item.averageWatchSeconds) {
+    return "观察中，逐稿数据未返回";
   }
   const searchShare = item.trafficSources?.搜索 || 0;
   const recommendationShare = item.trafficSources?.推荐页 || 0;
