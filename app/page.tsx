@@ -27,6 +27,7 @@ type Topic = {
   sourceCount?: number;
   authorityCount?: number;
   socialCount?: number;
+  investorProximity?: number;
   evidence?: { title: string; url: string; site?: string; score: number }[];
 };
 
@@ -300,6 +301,7 @@ export default function Home() {
             {active ? <ul>
               <li><b>来源有效</b><span>{active.sourceCount} 个独立站点，含 {active.authorityCount} 个高可信来源</span></li>
               <li><b>热度可解释</b><span>{active.socialCount || 0} 个社交信号，事件强度与来源扩散共同计分</span></li>
+              <li><b>个股接近度</b><span>{active.investorProximity ?? 0} 分；只奖励真实关注、本股定价冲击与可感知业务，不按知名度硬加分</span></li>
               <li><b>跨市场价值</b><span>{active.markets.join(" → ")}，可形成可验证的传导判断</span></li>
             </ul> : <div className="emptyDecision">完成实时扫描后，这里会展示第一名选题的证据门槛和评分依据。</div>}
             <div className="miniScores">

@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 
 const authorityPattern = /reuters|bloomberg|cnbc|wsj|ft\.com|apnews|sec\.gov|investor\.|\/ir(?:\/|-)|gcs-web|hkexnews|hkex\.com|sse\.com|szse\.cn|bse\.cn|fcc\.gov|bis\.gov|commerce\.gov|federalregister\.gov|nasdaq\.com|nyse\.com|fed|treasury|imf|财联社|证券时报|上海证券报|中国证券报|交易所|证监会|人民银行|统计局|公司公告/i;
 const socialPattern = /twitter|weibo|微博|douyin|抖音|bilibili|b站|雪球|xueqiu|reddit|youtube|tiktok|x\.com/i;
-const operatingCatalystPattern = /发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|大客户|召回|停产|延期|product launch|new model|pricing|preorder|orders|deliveries|sales|production|recall/i;
+const operatingCatalystPattern = /发布会|新品|新车|新机|新产品|售价|定价|预售|订单|锁单|交付|销量|量产|扩产|中标|大客户|召回|停产|延期|同店|翻台率|客流|门店|开店|闭店|店效|入住率|客单价|票房|零售额|提价|促销|折扣|联名|加盟|菜单|渠道|库存|出货|预订|会员|product launch|new model|pricing|preorder|orders|deliveries|sales|production|recall|same.store|comparable sales|store openings?|store closures?|traffic|occupancy|revpar|box office|gmv|average ticket|price increase|promotion|discount|franchise/i;
+const consumerCompanyPattern = /消费|餐饮|食品|饮料|白酒|乳业|零售|商超|电商|旅游|酒店|航空|服饰|鞋服|运动品牌|美妆|日化|家电|汽车|潮玩|玩具|电影|影视|娱乐|免税|consumer|restaurant|food|beverage|retail|travel|hotel|apparel|sportswear|beauty|cosmetic|appliance|auto|toy|box office/i;
 const leadershipSignalPattern = /行业领袖|创始人|企业家|首席执行官|CEO|投资大师|关键人物|公开表态|发言|演讲|采访|警告|呼吁|支持|反对|联名|共识|放缓|暂停|监管|founder|chief executive|CEO|industry leader|investor|policymaker|statement|speech|interview|warns?|calls? for|supports?|opposes?|agree|slow down|pause/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const SOURCE_WINDOW_HOURS = 72;
@@ -121,6 +122,18 @@ function isOperatingCatalystEvent(event: any) {
   return operatingAction && listedCompanySignal;
 }
 
+function specificCompanyEntities(event: any) {
+  const generic = /^(消费者?|投资者|股民|市场|行业|公司|企业|品牌|板块|消费股|消费行业|A股|港股|美股|中概股|零售业|餐饮业|汽车业)$/i;
+  return [...new Set([...(event?.actors || []), ...(event?.assets || [])]
+    .map((item: unknown) => String(item).trim())
+    .filter((item: string) => item.length >= 2 && item.length <= 40 && !generic.test(item)))];
+}
+
+function isConsumerCompanyEvent(event: any) {
+  const text = `${event?.title || ""} ${event?.summary || ""} ${(event?.actors || []).join(" ")} ${(event?.actions || []).join(" ")} ${(event?.objects || []).join(" ")} ${(event?.sectors || []).join(" ")}`;
+  return isOperatingCatalystEvent(event) && consumerCompanyPattern.test(text) && specificCompanyEntities(event).length > 0;
+}
+
 function hasVerifiedAudienceSignal(event: any) {
   const sources = Number(event?.sourceCount || 0);
   const authorities = Number(event?.authorityCount || 0);
@@ -159,6 +172,7 @@ function standaloneAnalysisForEvent(event: any) {
     searchDemand: Math.min(100, (event.ageHours <= 8 ? 35 : 10) + (isCorporate ? 30 : 10) + (event.marketReaction || 0) * 0.25),
     stakeholderConflict: isCorporate ? 65 : isMarketMove ? 45 : 35,
     entitySpecificity: (event.actors || []).length || (event.assets || []).length ? 75 : 40,
+    investorProximity: isCorporate ? Math.min(88, 55 + (event.socialCount || 0) * 5 + (event.marketReaction || 0) * 0.2) : 30,
     timelinessOpportunity: freshnessForAge(event.ageHours ?? 48),
     discoveryLane: isCorporate ? "dual" as const : "recommendation" as const,
   };
@@ -251,7 +265,7 @@ export async function POST(request: Request) {
     const baseQueries = buildScanQueries(); const batches: any[] = []; const failedQueries: any[] = []; let previousRequestAt = 0;
     for (const query of baseQueries) {
       const calendarQuery = /财报日历|业绩发布时间|earnings calendar|reporting before open|after close/i.test(query);
-      const operatingCatalystQuery = /发布会|新品|新车|新机|产品定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|product launch|new model|pricing|preorder/i.test(query);
+      const operatingCatalystQuery = /发布会|新品|新车|新机|产品定价|预售|订单|锁单|交付|销量|量产|扩产|中标|召回|停产|同店|翻台率|客流|门店|店效|入住率|客单价|票房|零售额|提价|促销|折扣|渠道|库存|same.store|comparable sales|store openings?|traffic|occupancy|revpar|box office|gmv|product launch|new model|pricing|preorder/i.test(query);
       const leadershipSignalQuery = /行业领袖|关键人物|创始人|CEO|公开表态|警告|呼吁|联名|industry leaders|founders|executives|policymakers|statement|speech|interview/i.test(query);
       try {
         const response = await throttledSearch(apiKey, query, previousRequestAt, calendarQuery || operatingCatalystQuery || leadershipSignalQuery ? 20 : 10); previousRequestAt = response.requestedAt; batches.push(response.result);
@@ -353,6 +367,9 @@ export async function POST(request: Request) {
     const recentOperatingCatalystEvents = events.filter((event: any) =>
       event.ageHours <= 24 && isOperatingCatalystEvent(event) && hasVerifiedAudienceSignal(event),
     ).slice(0, 4);
+    const recentConsumerCompanyEvents = events.filter((event: any) =>
+      event.ageHours <= 24 && isConsumerCompanyEvent(event) && hasVerifiedAudienceSignal(event),
+    ).slice(0, 4);
     const recentLeadershipEvents = events.filter((event: any) =>
       event.ageHours <= 24
       && leadershipSignalPattern.test(`${event.title} ${event.summary} ${(event.actors || []).join(" ")} ${(event.actions || []).join(" ")}`)
@@ -360,7 +377,7 @@ export async function POST(request: Request) {
     ).slice(0, 3);
     // 事件榜前列只要求模型生成分析候选，不再自动获得高潜池席位。
     // 保护名额只属于有可验证声量/价格信号的财报与经营催化剂。
-    const protectedEvents = [...new Map([...recentCorporateEvents, ...recentOperatingCatalystEvents, ...recentLeadershipEvents].map((event: any) => [event.id, event])).values()];
+    const protectedEvents = [...new Map([...recentCorporateEvents, ...recentOperatingCatalystEvents, ...recentConsumerCompanyEvents, ...recentLeadershipEvents].map((event: any) => [event.id, event])).values()];
     for (const event of protectedEvents) {
       if (!modelCoveredEventIds.has(event.id) && !modelCoveredEventIds.has(event.eventId)) augmentedAnalyses.push(standaloneAnalysisForEvent(event));
     }
@@ -384,12 +401,21 @@ export async function POST(request: Request) {
       const topicFreshnessScore = freshnessForAge(latestAgeHours);
       const isSingleCompanyCatalyst = linkedEvents.some((event) => event.family === "corporate" || isOperatingCatalystEvent(event));
       const verifiedAudienceSignal = linkedEvents.some(hasVerifiedAudienceSignal);
+      const consumerEvent = linkedEvents.find(isConsumerCompanyEvent);
+      const consumerEntity = consumerEvent ? specificCompanyEntities(consumerEvent)[0] || "" : "";
+      const normalizedTitle = consumerEntity && !String(analysis.title || "").includes(consumerEntity)
+        ? `${consumerEntity}：${analysis.title}`
+        : analysis.title;
+      const rawInvestorProximity = Number(analysis.investorProximity || 0);
+      const investorProximity = isSingleCompanyCatalyst
+        ? verifiedAudienceSignal ? Math.max(rawInvestorProximity, Math.min(88, 58 + linkedEvents.reduce((sum, event) => sum + (event.socialCount || 0), 0) * 4)) : Math.min(rawInvestorProximity, 45)
+        : Math.min(rawInvestorProximity, 50);
       // 模型给出的searchDemand不能代替真实声量。缺少独立来源、社区讨论和
       // 价格反应的单公司题仍可留在事件全集，但在高潜排序中明确降级。
       const attentionPenalty = isSingleCompanyCatalyst && !verifiedAudienceSignal ? 20 : 0;
-      const score = Math.max(0, scoreCausalAnalysisTopic(analysis, topicFreshnessScore) - attentionPenalty);
+      const score = Math.max(0, scoreCausalAnalysisTopic({ ...analysis, investorProximity }, topicFreshnessScore) - attentionPenalty);
       return {
-        ...analysis, id: index + 1, score, title: analysis.title,
+        ...analysis, investorProximity, isSingleCompanyCatalyst, isConsumerCompany: Boolean(consumerEvent), consumerEntity, id: index + 1, score, title: normalizedTitle,
         thesis: `${analysis.mechanism}${analysis.counterEvidence ? ` 反证是：${analysis.counterEvidence}` : ""}`,
         category: "原因分析", markets: analysis.markets, trigger: `${analysis.causality} · ${analysis.verificationSignals.join("、")}`,
         sourceCount, authorityCount, socialCount: linkedEvents.reduce((sum, event) => sum + (event.socialCount || 0), 0),
@@ -423,7 +449,7 @@ export async function POST(request: Request) {
     // 最多保护三个不同公司的财报题；它们仍按事件证据和时效排序，不固定任何公司名单。
     const recentCorporateTopics = recentCorporateEvents
       .map((event: any) => topicCandidates.find((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => id === event.id || id === event.eventId)))
-      .filter(Boolean)
+      .filter((topic): topic is NonNullable<typeof topic> => Boolean(topic))
       .filter((topic: any, index: number, list: any[]) => list.findIndex((item: any) => item.title === topic.title) === index)
       .slice(0, 3);
     for (const corporateTopic of recentCorporateTopics) {
@@ -468,6 +494,44 @@ export async function POST(request: Request) {
       const replaceAt = [...selectedTopics].reverse().findIndex((topic) => topic.ageHours > 8 && !requiredTitles.has(topic.title));
       if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, fresh);
     }
+    // 个人投资者更容易进入具体公司问题。若当轮确有合格候选，前五尽量保留
+    // 两个“24小时内 + 有真实关注信号 + 本股定价明确”的公司题；不设公司白名单。
+    const investorCloseCompanyTopics = topicCandidates.filter((topic) =>
+      topic.isSingleCompanyCatalyst && topic.verifiedAudienceSignal && topic.ageHours <= 24 && topic.investorProximity >= 60,
+    );
+    const desiredCompanyTopFive = Math.min(2, investorCloseCompanyTopics.length);
+    for (const companyTopic of investorCloseCompanyTopics.slice(0, desiredCompanyTopFive)) {
+      let currentIndex = selectedTopics.findIndex((topic) => topic.title === companyTopic.title);
+      if (currentIndex < 0) {
+        const replaceAt = [...selectedTopics].reverse().findIndex((topic) => !requiredTitles.has(topic.title));
+        if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, companyTopic);
+        else if (selectedTopics.length < 10) selectedTopics.push(companyTopic);
+        currentIndex = selectedTopics.findIndex((topic) => topic.title === companyTopic.title);
+      }
+      if (currentIndex >= 5) {
+        selectedTopics.splice(currentIndex, 1);
+        selectedTopics.splice(Math.min(4, selectedTopics.length), 0, companyTopic);
+      }
+    }
+    // 消费股不是按品牌名单保送：仅当24小时内确有经营新动作且具备真实声量时，
+    // 才保证最强的一条进入前五，避免宏观题在召回充分时仍把消费公司全部淹没。
+    const consumerCompanyTopics = topicCandidates.filter((topic) =>
+      topic.isConsumerCompany && topic.verifiedAudienceSignal && topic.ageHours <= 24 && topic.investorProximity >= 60,
+    );
+    const bestConsumerTopic = consumerCompanyTopics[0];
+    if (bestConsumerTopic) {
+      let currentIndex = selectedTopics.findIndex((topic) => topic.title === bestConsumerTopic.title);
+      if (currentIndex < 0) {
+        const replaceAt = [...selectedTopics].reverse().findIndex((topic) => !requiredTitles.has(topic.title));
+        if (replaceAt >= 0) selectedTopics.splice(selectedTopics.length - 1 - replaceAt, 1, bestConsumerTopic);
+        else if (selectedTopics.length < 10) selectedTopics.push(bestConsumerTopic);
+        currentIndex = selectedTopics.findIndex((topic) => topic.title === bestConsumerTopic.title);
+      }
+      if (currentIndex >= 5) {
+        selectedTopics.splice(currentIndex, 1);
+        selectedTopics.splice(Math.min(4, selectedTopics.length), 0, bestConsumerTopic);
+      }
+    }
     // 跨市场是账号定位：当本轮确实存在合格美股候选时，为其保留组合席位，
     // 但没有候选时绝不凭配额创造新闻。
     const usCandidates = topicCandidates.filter(isUSLinkedTopic);
@@ -488,6 +552,17 @@ export async function POST(request: Request) {
         selectedTopics.splice(Math.min(4, selectedTopics.length), 0, usTopic);
       }
     }
+    const priorityTopFive = [...new Map([
+      ...investorCloseCompanyTopics.slice(0, desiredCompanyTopFive),
+      ...consumerCompanyTopics.slice(0, 1),
+      ...selectedTopics.filter(isUSLinkedTopic).slice(0, desiredUSTopFive),
+      ...selectedTopics.filter((topic) => topic.ageHours <= 8).slice(0, 1),
+    ].map((topic) => [topic.title, topic])).values()]
+      .filter((topic) => selectedTopics.some((item) => item.title === topic.title))
+      .slice(0, 5)
+      .sort((a, b) => b.score - a.score);
+    const priorityTitles = new Set(priorityTopFive.map((topic) => topic.title));
+    selectedTopics.splice(0, selectedTopics.length, ...priorityTopFive, ...selectedTopics.filter((topic) => !priorityTitles.has(topic.title)));
     const topics = selectedTopics.slice(0, 10).map((topic, index) => ({ ...topic, id: index + 1, status: index < 5 ? "立即做" : "备选" }));
     const topicCoverage = new Map<string, number>();
     for (const topic of topics) for (const id of [...topic.observedEvents, ...topic.causalEvents]) topicCoverage.set(id, (topicCoverage.get(id) || 0) + 1);
@@ -518,7 +593,7 @@ export async function POST(request: Request) {
     }, {});
 
     return Response.json({
-      ok: true, pipelineVersion: "evidence-attention-balance-v8", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
+      ok: true, pipelineVersion: "consumer-company-discovery-v9", scannedAt: new Date().toISOString(), queryCount: batches.length, baseQueryCount: baseQueries.length,
       followUpQueryCount: allFollowUpQueries.length, followUpQueries: allFollowUpQueries, references,
       collectedReferenceCount: collected.length, timeFilteredOut: timeFilteredIds.size, timeWindowHours: SOURCE_WINDOW_HOURS,
       rawReferenceCount: fresh.length, contentDedupCount: references.length, passed: references,
@@ -531,6 +606,7 @@ export async function POST(request: Request) {
         corporateCalendarCompanies: corporateFollowUp.companies,
         recentCorporateEventCount: recentCorporateEvents.length,
         recentOperatingCatalystEventCount: recentOperatingCatalystEvents.length,
+        recentConsumerCompanyEventCount: recentConsumerCompanyEvents.length,
         recentLeadershipEventCount: recentLeadershipEvents.length,
         audienceQualifiedEventCount: events.filter(hasVerifiedAudienceSignal).length,
         usCandidateCount: topicCandidates.filter(isUSLinkedTopic).length,
@@ -542,6 +618,15 @@ export async function POST(request: Request) {
           topics: topics.filter((topic) => [...topic.observedEvents, ...topic.causalEvents].some((id: string) => {
             const event = eventById.get(id); return event && isOperatingCatalystEvent(event);
           })).length,
+        },
+        consumerCompanyFunnel: {
+          recalled: collected.filter((item) => consumerCompanyPattern.test(referenceText(item)) && operatingCatalystPattern.test(referenceText(item))).length,
+          fresh: references.filter((item) => consumerCompanyPattern.test(referenceText(item)) && operatingCatalystPattern.test(referenceText(item))).length,
+          events: events.filter(isConsumerCompanyEvent).length,
+          audienceQualified: events.filter((event: any) => isConsumerCompanyEvent(event) && hasVerifiedAudienceSignal(event)).length,
+          topics: topics.filter((topic) => topic.isConsumerCompany).length,
+          qualifiedEvents: events.filter((event: any) => isConsumerCompanyEvent(event) && hasVerifiedAudienceSignal(event)).map((event: any) => ({ title: event.title, entity: specificCompanyEntities(event)[0] || "", ageHours: event.ageHours, sources: event.sourceCount, social: event.socialCount, reaction: event.marketReaction })),
+          selectedTopics: topics.filter((topic) => topic.isConsumerCompany).map((topic) => ({ title: topic.title, rank: topic.id, score: topic.score })),
         },
         socialReferenceCount: semanticReferences.filter((item) => item.social).length,
         socialChannels,

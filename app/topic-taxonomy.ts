@@ -58,6 +58,16 @@ export const coverageMatrix: CoverageCell[] = [
     ],
   },
   {
+    key: "consumer_company_signals",
+    label: "消费上市公司经营信号",
+    queries: [
+      "A股 港股 消费上市公司 最新 同店 客流 翻台率 门店 销量 提价 促销 股价反应",
+      "餐饮 食品饮料 零售 旅游酒店 服饰美妆 家电汽车 潮玩影视 上市公司 最新经营数据 股价异动",
+      "消费公司 最新公告 投资者关系 订单 客单价 店效 开店闭店 渠道库存 经营变化",
+      "消费股 今日 雪球 微博 X 投资者 争议 预期差 同店 销量 门店 股价",
+    ],
+  },
+  {
     key: "industry_supply",
     label: "产业供需与供应链",
     queries: [
